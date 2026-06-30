@@ -1,13 +1,13 @@
 # Data Dictionary: final_dataset.csv
 **System target**: Cyber-Physical Digital Twin (CPDT) Spatial-Temporal Dataset  
-**Scope**: 30 Districts of Odisha, India (2006 to 2025)
+**Scope**: 30 Districts of Odisha, India (2006 to 2024)
 
-This reference table specifies the data types, measurement units, aggregation methods, and definitions for all 58 columns in [final_dataset.csv](file:///C:/Users/Asus/Desktop/Research/Research-Wiki/sources/data/final_dataset.csv).
+This reference table specifies the data types, measurement units, aggregation methods, and definitions for all 58 columns in `sources/data/final_dataset.csv`.
 
 | Column Name | Data Type | Units | Aggregation | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `District` | String | N/A | N/A | Standard administrative district name in Odisha (30 districts total). |
-| `Year` | Integer | N/A | N/A | Crop year (ranging from 2006 to 2025). |
+| `Year` | Integer | N/A | N/A | Crop year (ranging from 2006 to 2024). |
 | `Season` | String | N/A | N/A | Crop cultivation season: Kharif or Rabi. |
 | `Area` | Float | Hectares (ha) | Sum | Total cultivated area for the district, year, and season. |
 | `Production` | Float | Tonnes (MT) | Sum | Total harvested production weight. |
