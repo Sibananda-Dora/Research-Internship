@@ -5,7 +5,6 @@ import { Layers, MapPin, Crosshair } from 'lucide-react';
 export default function MapCard({ 
   selectedDistrict, 
   onSelectDistrict, 
-  districtStatus,
   coordinateMode,
   selectedCoordinate,
   onCoordinateSelect,
@@ -27,7 +26,6 @@ export default function MapCard({
         <OdishaGISMap 
           selectedDistrict={selectedDistrict} 
           onSelectDistrict={onSelectDistrict} 
-          districtStatus={districtStatus}
           coordinateMode={coordinateMode}
           selectedCoordinate={selectedCoordinate}
           onCoordinateSelect={onCoordinateSelect}

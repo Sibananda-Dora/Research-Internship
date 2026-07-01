@@ -77,7 +77,7 @@ export default function MetricsCard({ prediction, loading }) {
           Confidence (90%)
         </div>
         <div className="metric-val text-cyan" style={{ fontSize: '1.65rem', height: '51px', display: 'flex', alignItems: 'center' }}>
-          [{confidence_interval.lower} - {confidence_interval.upper}]
+          {confidence_interval?.lower?.toFixed(2) ?? '?'} - {confidence_interval?.upper?.toFixed(2) ?? '?'}
         </div>
         <div className="metric-change text-secondary">
           Monte Carlo uncertainty bounds

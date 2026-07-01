@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Environment files
+backend/.env
+frontend/.env
+
+# Build artifacts
+frontend/dist/
+node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ML artifacts
+code/phase-2-training/models/backup_*/
+code/phase-2-training/__pycache__/

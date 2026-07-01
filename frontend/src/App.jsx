@@ -1,24 +1,41 @@
-import React, { useState, useEffect } from 'react';
-import MapCard from './components/MapCard';
-import MetricsCard from './components/MetricsCard';
-import Timeline from './components/Timeline';
-import Heatmap from './components/Heatmap';
-import DSSChat from './components/DSSChat';
-import { Leaf, Sliders, ShieldAlert, Cpu } from 'lucide-react';
+import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
+import { ShieldAlert, Cpu, RefreshCw, CheckCircle, AlertCircle, Layout } from 'lucide-react';
 
-const API_BASE_URL = 'http://127.0.0.1:8000';
+const FarmerDashboard = lazy(() => import('./components/FarmerDashboard'));
+const AnalystDashboard = lazy(() => import('./components/AnalystDashboard'));
+const ArchitectureFlow = lazy(() => import('./components/ArchitectureFlow'));
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000';
 
 const YEARS = Array.from({ length: 20 }, (_, i) => 2006 + i);
 
+const DEFAULT_STEPS_ORDER = [
+  'validate_csv', 'fetch_telemetry', 'merge_data',
+  'backup_models', 'prepare_data', 'train_models', 'save_version'
+];
+
+const STEP_LABELS = {
+  validate_csv: 'Validating incoming data',
+  fetch_telemetry: 'Fetching NASA telemetry',
+  merge_data: 'Merging into dataset',
+  backup_models: 'Backing up current models',
+  prepare_data: 'Running data preparation',
+  train_models: 'Retraining models (~120s)',
+  save_version: 'Saving version metadata',
+  queued: 'Queued...',
+  complete: 'Complete!'
+};
+
+const DISTRICTS = [
+  "Angul", "Balangir", "Balasore", "Bargarh", "Bhadrak", "Boudh",
+  "Cuttack", "Deogarh", "Dhenkanal", "Gajapati", "Ganjam", "Jagatsinghpur",
+  "Jajpur", "Jharsuguda", "Kalahandi", "Kandhamal", "Kendrapara", "Keonjhar",
+  "Khurda", "Koraput", "Malkangiri", "Mayurbhanj", "Nabarangpur", "Nayagarh",
+  "Nuapada", "Puri", "Rayagada", "Sambalpur", "Sonepur", "Sundargarh"
+];
+
 export default function App() {
-  const [districts, setDistricts] = useState([
-    "Angul", "Balangir", "Balasore", "Bargarh", "Bhadrak", "Boudh",
-    "Cuttack", "Deogarh", "Dhenkanal", "Gajapati", "Ganjam", "Jagatsinghpur",
-    "Jajpur", "Jharsuguda", "Kalahandi", "Kandhamal", "Kendrapara", "Keonjhar",
-    "Khurda", "Koraput", "Malkangiri", "Mayurbhanj", "Nabarangpur", "Nayagarh",
-    "Nuapada", "Puri", "Rayagada", "Sambalpur", "Sonepur", "Sundargarh"
-  ]);
-  
+  const districts = DISTRICTS;
   const [selectedDistrict, setSelectedDistrict] = useState('Ganjam');
   const [selectedYear, setSelectedYear] = useState(2024);
   const [selectedSeason, setSelectedSeason] = useState('Kharif');
@@ -30,6 +47,13 @@ export default function App() {
   const [error, setError] = useState(null);
   const [backendOffline, setBackendOffline] = useState(false);
 
+  const [pipelineVersion, setPipelineVersion] = useState(null);
+  const [pipelineCheck, setPipelineCheck] = useState(null);
+  const [pipelineTaskId, setPipelineTaskId] = useState(null);
+  const [pipelineStatus, setPipelineStatus] = useState(null);
+  const [pipelineModal, setPipelineModal] = useState(false);
+  const pollingRef = useRef(null);
+
   // Weather simulation modifier state
   const [simulating, setSimulating] = useState(false);
   const [modifiers, setModifiers] = useState({
@@ -38,25 +62,14 @@ export default function App() {
     wetness: 0.0
   });
 
+  // Role toggle
+  const [userRole, setUserRole] = useState('analyst');
+  const [showArchFlow, setShowArchFlow] = useState(false);
+
   // Coordinate picker state (for MapCard → OdishaGISMap)
   const [coordinateMode, setCoordinateMode] = useState(false);
   const [selectedCoordinate, setSelectedCoordinate] = useState(null);
   const [nearestDistrict, setNearestDistrict] = useState(null);
-
-  // Calculate dummy status map for map choropleths
-  const [districtStatus, setDistrictStatus] = useState({});
-
-  // Generate a random status map for visual interest based on seed
-  useEffect(() => {
-    const statuses = ['healthy', 'healthy', 'stress', 'healthy', 'failure', 'stress', 'healthy'];
-    const tempStatus = {};
-    districts.forEach((d, idx) => {
-      // Semi-random deterministic seed
-      const seed = d.length + idx + (selectedYear % 10) + (selectedSeason === 'Kharif' ? 2 : 1);
-      tempStatus[d] = statuses[seed % statuses.length];
-    });
-    setDistrictStatus(tempStatus);
-  }, [selectedYear, selectedSeason, districts]);
 
   // Fetch prediction and telemetry when district, year, or season changes
   useEffect(() => {
@@ -149,6 +162,71 @@ export default function App() {
     };
     fetchCoordPrediction();
   }, [selectedCoordinate, selectedYear, selectedSeason]);
+
+  // Fetch pipeline version on mount
+  useEffect(() => {
+    const fetchVersion = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/pipeline/version`);
+        if (res.ok) setPipelineVersion(await res.json());
+      } catch {}
+    };
+    fetchVersion();
+  }, []);
+
+  // Poll pipeline status while running
+  useEffect(() => {
+    if (!pipelineTaskId) return;
+    pollingRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/pipeline/status/${pipelineTaskId}`);
+        if (res.ok) {
+          const data = await res.json();
+          setPipelineStatus(data);
+          if (data.status === 'success' || data.status === 'failed') {
+            clearInterval(pollingRef.current);
+            if (data.status === 'success') {
+              const verRes = await fetch(`${API_BASE_URL}/api/pipeline/version`);
+              if (verRes.ok) setPipelineVersion(await verRes.json());
+            }
+          }
+        }
+      } catch {}
+    }, 2000);
+    return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
+  }, [pipelineTaskId]);
+
+  const handleCheckPipeline = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/pipeline/check`);
+      if (res.ok) {
+        const data = await res.json();
+        setPipelineCheck(data);
+        setPipelineModal(true);
+      }
+    } catch {}
+  };
+
+  const handleRunPipeline = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/pipeline/update`, { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setPipelineTaskId(data.task_id);
+        setPipelineStatus({ status: 'queued', step: 'queued', progress: 0 });
+        setPipelineCheck(null);
+      }
+    } catch {}
+  };
+
+  const handleModifierChange = (key, value) => {
+    setModifiers(prev => ({ ...prev, [key]: value }));
+  };
+
+  const handleSimulatePreset = (mods) => {
+    setModifiers(prev => ({ ...prev, ...mods }));
+    setTimeout(() => handleSimulationSubmit(), 300);
+  };
 
   // Handle What-If custom simulation submission
   const handleSimulationSubmit = async () => {
@@ -255,6 +333,37 @@ export default function App() {
               : 'Select a district or pin your field on the map'}
             </p>
           </div>
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div className="role-toggle">
+              <button className={userRole === 'farmer' ? 'active' : ''} onClick={() => setUserRole('farmer')}>👨‍🌾 Farmer</button>
+              <button className={userRole === 'analyst' ? 'active' : ''} onClick={() => setUserRole('analyst')}>📊 Analyst</button>
+            </div>
+            <button
+              onClick={() => setShowArchFlow(!showArchFlow)}
+              className="toggle-btn"
+              style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 10px', fontSize: '0.75rem' }}
+              title="Architecture Flow"
+            >
+              <Layout size={14} /> Flow
+            </button>
+            <button
+              onClick={handleCheckPipeline}
+              disabled={pipelineStatus?.status === 'running'}
+              className="send-btn"
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', fontSize: '0.8rem', opacity: pipelineStatus?.status === 'running' ? 0.5 : 1 }}
+            >
+              <RefreshCw size={14} className={pipelineStatus?.status === 'running' ? 'spin' : ''} />
+              {pipelineStatus?.status === 'running' ? 'Updating...' : 'Check Updates'}
+            </button>
+            {pipelineVersion && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', background: 'rgba(255,255,255,0.05)', borderRadius: '6px', fontSize: '0.75rem' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>Model</span>
+                <span className="text-cyan" style={{ fontWeight: 600 }}>v{pipelineVersion.version}</span>
+                {pipelineStatus?.status === 'success' && <CheckCircle size={12} className="text-healthy" />}
+                {pipelineStatus?.status === 'failed' && <AlertCircle size={12} className="text-failure" />}
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="controls-header">
@@ -305,128 +414,120 @@ export default function App() {
         )}
       </div>
 
-      {/* Main dashboard grid */}
-      <div className="dashboard-grid">
-        <div className="main-content-flow">
-          {/* Prediction summary */}
-          <MetricsCard prediction={prediction} loading={loading} />
+      {/* Conditional dashboard */}
+      <Suspense fallback={<div className="loading-pulse" style={{padding: 40, textAlign: 'center', color: '#8892b0'}}>Loading dashboard...</div>}>
+      {userRole === 'farmer' ? (
+        <FarmerDashboard
+          prediction={prediction}
+          loading={loading}
+          telemetry={telemetry}
+          selectedDistrict={selectedDistrict}
+          selectedYear={selectedYear}
+          selectedSeason={selectedSeason}
+          onSelectDistrict={setSelectedDistrict}
+          onSelectYear={setSelectedYear}
+          onSelectSeason={setSelectedSeason}
+          coordinateMode={coordinateMode}
+          selectedCoordinate={selectedCoordinate}
+          onCoordinateSelect={setSelectedCoordinate}
+          onToggleCoordinateMode={() => setCoordinateMode(!coordinateMode)}
+          onSimulatePreset={handleSimulatePreset}
+          onSimulate={handleSimulationSubmit}
+          onChatSimulation={handleChatSimulation}
+        />
+      ) : (
+        <AnalystDashboard
+          prediction={prediction}
+          loading={loading}
+          telemetry={telemetry}
+          selectedWeek={selectedWeek}
+          onSelectWeek={setSelectedWeek}
+          selectedDistrict={selectedDistrict}
+          selectedYear={selectedYear}
+          selectedSeason={selectedSeason}
+          onSelectDistrict={setSelectedDistrict}
+          coordinateMode={coordinateMode}
+          selectedCoordinate={selectedCoordinate}
+          onCoordinateSelect={setSelectedCoordinate}
+          onToggleCoordinateMode={() => setCoordinateMode(!coordinateMode)}
+          modifiers={modifiers}
+          onModifierChange={handleModifierChange}
+          simulating={simulating}
+          onSimulate={handleSimulationSubmit}
+          onResetSimulation={handleResetSimulation}
+          onChatSimulation={handleChatSimulation}
+        />
+      )}
+      </Suspense>
+      {/* Architecture Flow overlay */}
+      <Suspense fallback={null}>
+      <ArchitectureFlow
+        trace={prediction?.trace}
+        visible={showArchFlow}
+        onClose={() => setShowArchFlow(false)}
+      />
+      </Suspense>
 
-          {/* Map twin and timeline */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '20px' }}>
-            <MapCard 
-              selectedDistrict={selectedDistrict} 
-              onSelectDistrict={setSelectedDistrict}
-              districtStatus={districtStatus}
-              coordinateMode={coordinateMode}
-              selectedCoordinate={selectedCoordinate}
-              onCoordinateSelect={setSelectedCoordinate}
-              onToggleCoordinateMode={() => setCoordinateMode(!coordinateMode)}
-            />
-
-            <Timeline 
-              selectedWeek={selectedWeek}
-              onSelectWeek={setSelectedWeek}
-              telemetry={telemetry}
-              loading={loading}
-            />
+      {/* Pipeline update modal */}
+      {pipelineModal && pipelineCheck && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, backdropFilter: 'blur(4px)' }}>
+          <div className="glass-card" style={{ maxWidth: '480px', width: '90%', padding: '28px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 600 }}>New Data Available</h3>
+            <div style={{ background: 'rgba(6,182,212,0.1)', border: '1px solid rgba(6,182,212,0.3)', borderRadius: '8px', padding: '14px', fontSize: '0.9rem' }}>
+              <p><strong>{pipelineCheck.new_records} new records</strong> found for year <strong>{pipelineCheck.new_years?.join(', ')}</strong></p>
+              <p style={{ color: 'var(--text-secondary)', marginTop: '4px' }}>New data will be merged, models retrained, and the dashboard will hot-reload.</p>
+            </div>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button onClick={() => { setPipelineModal(false); setPipelineCheck(null); }} className="toggle-btn" style={{ padding: '9px 18px' }}>Cancel</button>
+              <button onClick={() => { handleRunPipeline(); setPipelineModal(false); }} className="send-btn" style={{ padding: '9px 18px' }}>Download & Retrain</button>
+            </div>
           </div>
-
-          {/* Attention Weights Heatmap */}
-          <Heatmap 
-            attentionWeights={prediction?.attention_weights}
-            telemetry={telemetry}
-            selectedWeek={selectedWeek}
-            onSelectWeek={setSelectedWeek}
-            loading={loading}
-          />
         </div>
+      )}
 
-        {/* Sidebar panels */}
-        <div className="sidebar-panel">
-          {/* What-If Simulation sliders */}
-          <div className="glass-card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
-              <Sliders size={18} className="text-cyan" />
-              <h3 style={{ fontSize: '1rem', fontWeight: 600 }}>What-If Soil & Climate Simulator</h3>
+      {/* Pipeline progress overlay */}
+      {pipelineStatus?.status === 'running' && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, backdropFilter: 'blur(4px)' }}>
+          <div className="glass-card" style={{ maxWidth: '440px', width: '90%', padding: '28px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <RefreshCw size={18} className="text-cyan spin" /> Updating Models
+            </h3>
+            <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.08)', borderRadius: '3px', overflow: 'hidden' }}>
+              <div style={{ width: `${pipelineStatus.progress || 0}%`, height: '100%', background: 'var(--accent-gradient, linear-gradient(90deg, #06b6d4, #3b82f6))', borderRadius: '3px', transition: 'width 0.5s ease' }} />
             </div>
-
-            {/* Precip slider */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem' }}>
-                <span style={{ color: 'var(--text-secondary)' }}>Precipitation Scaling</span>
-                <span className="text-cyan">{(modifiers.precip * 100).toFixed(0)}%</span>
-              </div>
-              <input 
-                type="range" 
-                min="0.2" 
-                max="2.0" 
-                step="0.1" 
-                value={modifiers.precip}
-                onChange={(e) => setModifiers(prev => ({ ...prev, precip: parseFloat(e.target.value) }))}
-              />
-            </div>
-
-            {/* Temp slider */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem' }}>
-                <span style={{ color: 'var(--text-secondary)' }}>Temperature Offset</span>
-                <span className="text-cyan">{modifiers.temp > 0 ? `+${modifiers.temp}` : modifiers.temp} °C</span>
-              </div>
-              <input 
-                type="range" 
-                min="-5" 
-                max="5" 
-                step="0.5" 
-                value={modifiers.temp}
-                onChange={(e) => setModifiers(prev => ({ ...prev, temp: parseFloat(e.target.value) }))}
-              />
-            </div>
-
-            {/* Wetness slider */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem' }}>
-                <span style={{ color: 'var(--text-secondary)' }}>Soil Moisture Offset</span>
-                <span className="text-cyan">{modifiers.wetness > 0 ? `+${modifiers.wetness}` : modifiers.wetness}</span>
-              </div>
-              <input 
-                type="range" 
-                min="-0.3" 
-                max="0.3" 
-                step="0.05" 
-                value={modifiers.wetness}
-                onChange={(e) => setModifiers(prev => ({ ...prev, wetness: parseFloat(e.target.value) }))}
-              />
-            </div>
-
-            <div style={{ display: 'flex', gap: '10px', marginTop: '6px' }}>
-              <button 
-                onClick={handleSimulationSubmit}
-                className="send-btn" 
-                style={{ flex: 1, padding: '10px' }}
-              >
-                Run Simulation
-              </button>
-              {simulating && (
-                <button 
-                  onClick={handleResetSimulation}
-                  className="toggle-btn"
-                  style={{ padding: '10px' }}
-                >
-                  Reset
-                </button>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.85rem' }}>
+              {['validate_csv', 'fetch_telemetry', 'merge_data', 'backup_models', 'prepare_data', 'train_models', 'save_version'].map(step => (
+                <div key={step} style={{ display: 'flex', alignItems: 'center', gap: '8px', color: pipelineStatus.step === step ? 'var(--text-primary)' : (DEFAULT_STEPS_ORDER.indexOf(step) < DEFAULT_STEPS_ORDER.indexOf(pipelineStatus.step) ? 'var(--text-secondary)' : 'rgba(255,255,255,0.2)') }}>
+                  <div style={{ width: '18px', height: '18px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: pipelineStatus.step === step ? 'rgba(6,182,212,0.2)' : 'transparent', border: '1px solid', borderColor: pipelineStatus.step === step ? '#06b6d4' : (DEFAULT_STEPS_ORDER.indexOf(step) < DEFAULT_STEPS_ORDER.indexOf(pipelineStatus.step) ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)') }}>
+                    {DEFAULT_STEPS_ORDER.indexOf(step) < DEFAULT_STEPS_ORDER.indexOf(pipelineStatus.step) ? <CheckCircle size={12} /> : (pipelineStatus.step === step ? <RefreshCw size={10} className="spin" /> : null)}
+                  </div>
+                  <span>{STEP_LABELS[step] || step}</span>
+                </div>
+              ))}
+              {pipelineStatus.train_output && (
+                <div style={{ marginTop: '8px', padding: '8px', background: 'rgba(0,0,0,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: 'var(--text-secondary)', fontFamily: 'monospace', maxHeight: '80px', overflow: 'auto' }}>
+                  {pipelineStatus.train_output}
+                </div>
               )}
             </div>
           </div>
-
-          {/* Expert chatbot */}
-          <DSSChat 
-            district={selectedDistrict}
-            year={selectedYear}
-            season={selectedSeason}
-            onRunSimulation={handleChatSimulation}
-          />
         </div>
-      </div>
+      )}
+
+      {/* Pipeline completion overlay */}
+      {pipelineStatus?.status === 'success' && !pipelineModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, backdropFilter: 'blur(4px)' }}>
+          <div className="glass-card" style={{ maxWidth: '400px', width: '90%', padding: '28px', display: 'flex', flexDirection: 'column', gap: '14px', alignItems: 'center', textAlign: 'center' }}>
+            <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'rgba(34,197,94,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <CheckCircle size={28} className="text-healthy" />
+            </div>
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 600 }}>Models Updated</h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Models retrained with new data. Version updated.</p>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem' }}>The dashboard is now running with the latest predictions.</p>
+            <button onClick={() => setPipelineStatus(null)} className="send-btn" style={{ padding: '9px 24px', marginTop: '4px' }}>Done</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

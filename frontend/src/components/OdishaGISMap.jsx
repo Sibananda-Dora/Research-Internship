@@ -1,15 +1,8 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { MapContainer, TileLayer, GeoJSON, ZoomControl, Marker, Popup, useMapEvents, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, GeoJSON, ZoomControl, Marker, Popup, Polygon, useMapEvents, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { odishaGeoJSON } from '../data/odishaGeoJSON';
-
-const STATUS_COLORS = {
-  healthy: '#10b981',
-  stress: '#f59e0b',
-  failure: '#ef4444',
-  info: '#06b6d4'
-};
 
 const TILE_LAYERS = {
   satellite: {
@@ -65,6 +58,50 @@ function findDistrictAtPoint(latlng, geoData) {
     }
   }
   return null;
+}
+
+function computeOuterBoundary(geoData) {
+  if (!geoData?.features) return null;
+  const edgeMap = new Map();
+  function key(a, b) {
+    const p1 = `${a[0].toFixed(5)},${a[1].toFixed(5)}`;
+    const p2 = `${b[0].toFixed(5)},${b[1].toFixed(5)}`;
+    return p1 < p2 ? `${p1}|${p2}` : `${p2}|${p1}`;
+  }
+  for (const f of geoData.features) {
+    const type = f.geometry.type;
+    const polys = type === 'MultiPolygon' ? f.geometry.coordinates : [f.geometry.coordinates];
+    for (const poly of polys) {
+      const pts = poly[0];
+      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const k = key(pts[i], pts[j]);
+        edgeMap.set(k, (edgeMap.get(k) || 0) + 1);
+      }
+    }
+  }
+  const segments = [];
+  for (const [k, c] of edgeMap) {
+    if (c === 1) {
+      const [p1, p2] = k.split('|');
+      segments.push([p1.split(',').map(Number), p2.split(',').map(Number)]);
+    }
+  }
+  if (!segments.length) return null;
+  const boundary = [];
+  let cur = segments.pop();
+  boundary.push(cur[0], cur[1]);
+  while (segments.length) {
+    const last = boundary[boundary.length - 1];
+    let found = false;
+    for (let i = 0; i < segments.length; i++) {
+      const d0 = Math.abs(segments[i][0][0] - last[0]) + Math.abs(segments[i][0][1] - last[1]);
+      const d1 = Math.abs(segments[i][1][0] - last[0]) + Math.abs(segments[i][1][1] - last[1]);
+      if (d0 < 1e-4) { boundary.push(segments[i][1]); segments.splice(i, 1); found = true; break; }
+      if (d1 < 1e-4) { boundary.push(segments[i][0]); segments.splice(i, 1); found = true; break; }
+    }
+    if (!found) break;
+  }
+  return boundary.map(p => [p[1], p[0]]);
 }
 
 function MapClickHandler({ enabled, onCoordinateSelect, onSelectDistrict, geoData }) {
@@ -204,7 +241,6 @@ function NominatimSearch({ onResult }) {
 export default function OdishaGISMap({ 
   selectedDistrict, 
   onSelectDistrict, 
-  districtStatus = {},
   coordinateMode = false,
   selectedCoordinate = null,
   onCoordinateSelect = () => {},
@@ -218,48 +254,44 @@ export default function OdishaGISMap({
 
   const getStyle = useCallback((feature) => {
     const name = feature.properties.name;
-    const status = districtStatus[name] || 'info';
-    const color = STATUS_COLORS[status];
     const isSelected = selectedDistrict?.toLowerCase() === name?.toLowerCase();
     return {
-      fillColor: color,
-      fillOpacity: coordinateMode ? 0.12 : (isSelected ? 0.55 : 0.25),
-      color: isSelected && !coordinateMode ? '#ffffff' : 'rgba(255, 255, 255, 0.45)',
-      weight: isSelected && !coordinateMode ? 3 : 1.5,
+      fillColor: isSelected ? '#06b6d4' : '#1a1d2e',
+      fillOpacity: isSelected ? 0.35 : 0.05,
+      color: isSelected ? '#ffffff' : 'rgba(255, 255, 255, 0.15)',
+      weight: isSelected ? 2.5 : 1,
       className: 'district-polygon'
     };
-  }, [selectedDistrict, districtStatus, coordinateMode]);
+  }, [selectedDistrict]);
 
   const onEachFeature = useCallback((feature, layer) => {
     const name = feature.properties.name;
-    const status = districtStatus[name] || 'info';
-    const color = STATUS_COLORS[status];
     layer.bindTooltip(
       `<div style="background:#111318;color:#fff;padding:4px 8px;border:1px solid rgba(255,255,255,0.1);border-radius:4px;">
         <strong>${name}</strong>
-        <div style="color:${color};font-size:0.8rem;margin-top:2px;">
-          Status: ${status.toUpperCase()}
-        </div>
       </div>`,
       { direction: 'top', offset: [0, -10], opacity: 0.95 }
     );
     layer.on('mouseover', () => {
-      layer.setStyle({ fillOpacity: 0.5, weight: 2.5, color: '#ffffff' });
+      layer.setStyle({ fillOpacity: 0.35, weight: 2.5, color: '#ffffff' });
       layer.bringToFront();
     });
     layer.on('mouseout', () => {
       const isSelected = selectedDistrict?.toLowerCase() === name?.toLowerCase();
       layer.setStyle({
-        fillOpacity: isSelected ? 0.55 : 0.25,
-        weight: isSelected ? 3 : 1.5,
-        color: isSelected ? '#ffffff' : 'rgba(255, 255, 255, 0.45)'
+        fillColor: isSelected ? '#06b6d4' : '#1a1d2e',
+        fillOpacity: isSelected ? 0.35 : 0.05,
+        weight: isSelected ? 2.5 : 1,
+        color: isSelected ? '#ffffff' : 'rgba(255, 255, 255, 0.15)'
       });
     });
-  }, [selectedDistrict, districtStatus]);
+  }, [selectedDistrict]);
 
   const geoJsonKey = useMemo(() => {
-    return `${selectedDistrict}-${coordinateMode}-${tileLayer}-${JSON.stringify(districtStatus)}`;
-  }, [selectedDistrict, districtStatus, coordinateMode, tileLayer]);
+    return `${selectedDistrict}-${tileLayer}`;
+  }, [selectedDistrict, tileLayer]);
+
+  const outerBoundary = useMemo(() => computeOuterBoundary(odishaGeoJSON), []);
 
   const currentTile = TILE_LAYERS[tileLayer];
 
@@ -370,6 +402,20 @@ export default function OdishaGISMap({
           onEachFeature={onEachFeature}
         />
         
+        {outerBoundary && (
+          <Polygon
+            positions={outerBoundary}
+            pathOptions={{
+              fill: false,
+              color: '#06b6d4',
+              weight: 3.5,
+              opacity: 0.9,
+              interactive: false,
+              className: 'outer-glow-boundary'
+            }}
+          />
+        )}
+
         <MapClickHandler 
           enabled={coordinateMode} 
           onCoordinateSelect={onCoordinateSelect} 
