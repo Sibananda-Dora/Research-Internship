@@ -7,7 +7,7 @@ import sys
 from typing import List, Optional, Dict
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 # Import the orchestrator (routes queries to the right model)
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), 'code', 'phase-2-training'))
@@ -53,6 +53,13 @@ class SimulationRequest(BaseModel):
     wetness_modifiers: List[float]
     humidity_modifiers: List[float]
 
+    @field_validator('precip_modifiers', 'temp_modifiers', 'wetness_modifiers', 'humidity_modifiers')
+    @classmethod
+    def check_modifier_length(cls, v):
+        if len(v) != 12:
+            raise ValueError(f'Each modifier list must have exactly 12 entries, got {len(v)}')
+        return v
+
 class PredictionResponse(BaseModel):
     district: str
     season: str
@@ -68,6 +75,7 @@ class PredictionResponse(BaseModel):
     monte_carlo_distribution: Optional[List[float]] = None
     monte_carlo_std: Optional[float] = None
     confidence_interval: Optional[Dict[str, float]] = None
+    trace: Optional[Dict] = None
     is_mocked: bool = False
 
 class AskRequest(BaseModel):
@@ -199,7 +207,10 @@ def get_prediction(
             "GWETROOT": [0.6 - i * 0.02 for i in range(12)]
         }
 
-    result = run_orchestrator(district, season, year, telemetry, query_type)
+    try:
+        result = run_orchestrator(district, season, year, telemetry, query_type)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     result["is_mocked"] = is_mocked
     return PredictionResponse(**result)
 
@@ -345,6 +356,13 @@ class CoordinateSimulationRequest(BaseModel):
     wetness_modifiers: List[float]
     humidity_modifiers: List[float]
 
+    @field_validator('precip_modifiers', 'temp_modifiers', 'wetness_modifiers', 'humidity_modifiers')
+    @classmethod
+    def check_modifier_length(cls, v):
+        if len(v) != 12:
+            raise ValueError(f'Each modifier list must have exactly 12 entries, got {len(v)}')
+        return v
+
 class CoordinatePredictRequest(BaseModel):
     latitude: float
     longitude: float
@@ -459,7 +477,10 @@ async def predict_coordinate(request: CoordinatePredictRequest,
             "RH2M": [75.0 + math.cos(i) * 10 for i in range(12)],
             "GWETROOT": [0.6 - i * 0.02 for i in range(12)]
         }
-    result = run_orchestrator(nearest, request.season, request.year, telemetry, query_type)
+    try:
+        result = run_orchestrator(nearest, request.season, request.year, telemetry, query_type)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     result["is_mocked"] = is_mocked
     return CoordinatePredictResponse(latitude=request.latitude, longitude=request.longitude,
                                      nearest_district=nearest, **result)
@@ -495,6 +516,130 @@ async def simulate_coordinate(request: CoordinateSimulationRequest,
     }
 
 
+# ===================================================================
+# PIPELINE UPDATE ENDPOINTS
+# ===================================================================
+
+import uuid, threading, time, traceback
+from update_pipeline import (
+    check_new_data, run_pipeline, get_current_version,
+    get_dataset_info, DEFAULT_STEPS
+)
+
+pipeline_tasks: Dict[str, dict] = {}
+DEMO_CSV_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(__file__)),
+    "sources", "data", "new_yield_2025_demo.csv"
+)
+
+
+def _pipeline_worker(task_id: str, csv_path: str):
+    def status_callback(status):
+        if isinstance(status, dict):
+            pipeline_tasks[task_id].update(status)
+        elif isinstance(status, str):
+            pipeline_tasks[task_id]["step"] = status
+
+    try:
+        pipeline_tasks[task_id]["status"] = "running"
+        result = run_pipeline(csv_path, status_callback=status_callback)
+        pipeline_tasks[task_id].update(result)
+        pipeline_tasks[task_id]["status"] = "success"
+    except Exception as e:
+        pipeline_tasks[task_id]["status"] = "failed"
+        pipeline_tasks[task_id]["error"] = str(e)
+        pipeline_tasks[task_id]["traceback"] = traceback.format_exc()
+
+
+class PipelineCheckResponse(BaseModel):
+    new_data: bool
+    latest_year: Optional[int] = None
+    total_records: int = 0
+    new_records: int = 0
+    new_years: List[int] = []
+    file_path: Optional[str] = None
+
+
+@app.get("/api/pipeline/check")
+def check_pipeline():
+    result = check_new_data(csv_path=DEMO_CSV_PATH)
+    return PipelineCheckResponse(**result)
+
+
+@app.post("/api/pipeline/update")
+def trigger_pipeline_update():
+    if not os.path.exists(DEMO_CSV_PATH):
+        raise HTTPException(status_code=404, detail="Demo CSV not found. Generate one first.")
+
+    check = check_new_data(csv_path=DEMO_CSV_PATH)
+    if not check.get("new_data"):
+        raise HTTPException(status_code=400, detail="No new data found to process.")
+
+    task_id = str(uuid.uuid4())
+    pipeline_tasks[task_id] = {
+        "task_id": task_id,
+        "status": "queued",
+        "step": "queued",
+        "progress": 0,
+        "total_steps": len(DEFAULT_STEPS),
+        "created_at": time.time()
+    }
+
+    thread = threading.Thread(target=_pipeline_worker, args=(task_id, DEMO_CSV_PATH), daemon=True)
+    thread.start()
+
+    return {"task_id": task_id, "status": "queued"}
+
+
+@app.get("/api/pipeline/status/{task_id}")
+def get_pipeline_status(task_id: str):
+    task = pipeline_tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    return {
+        "task_id": task["task_id"],
+        "status": task["status"],
+        "step": task.get("step", "unknown"),
+        "progress": task.get("progress", 0),
+        "error": task.get("error"),
+        "train_output": task.get("train_output", "")[-200:] if task.get("train_output") else None,
+    }
+
+
+class PipelineVersionResponse(BaseModel):
+    version: str
+    last_trained: Optional[str] = None
+    metrics: dict = {}
+    total_records: int = 0
+
+
+@app.get("/api/pipeline/version")
+def get_pipeline_version():
+    version_data = get_current_version()
+    dataset_info = get_dataset_info() if not df_dataset.empty else {}
+    return PipelineVersionResponse(
+        version=version_data.get("version", "1.0"),
+        last_trained=version_data.get("last_trained"),
+        metrics=version_data.get("metrics", {}),
+        total_records=dataset_info.get("total_records", 0)
+    )
+
+
+@app.get("/demo-new-data")
+def serve_demo_csv():
+    """Serves the demo CSV for testing the pipeline check flow."""
+    if not os.path.exists(DEMO_CSV_PATH):
+        raise HTTPException(status_code=404, detail="Demo CSV not found.")
+    import csv
+    rows = []
+    with open(DEMO_CSV_PATH) as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            rows.append(row)
+    return {"data": rows, "count": len(rows), "source": "demo_2025_kharif"}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
+

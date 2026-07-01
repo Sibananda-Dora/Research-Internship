@@ -2,12 +2,15 @@
 import os
 import json
 import re
+import time
 from pathlib import Path
 from dotenv import load_dotenv
-from groq import Groq
+from groq import Groq, RateLimitError, APIError
 
 load_dotenv(Path(__file__).parent / ".env")
 MODEL = "llama-3.3-70b-versatile"
+_MAX_RETRIES = 3
+_INITIAL_BACKOFF = 1.0
 
 DISTRICTS = [
     "Angul","Balangir","Balasore","Bargarh","Bhadrak","Boudh","Cuttack","Deogarh",
@@ -28,19 +31,28 @@ def _get_client() -> Groq:
     return _client
 
 def _call(system: str, user: str, temperature: float = 0.1, max_tokens: int = 512) -> str:
-    try:
-        resp = _get_client().chat.completions.create(
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        return resp.choices[0].message.content.strip()
-    except Exception as e:
-        return ""
+    last_exc = None
+    for attempt in range(_MAX_RETRIES):
+        try:
+            resp = _get_client().chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return resp.choices[0].message.content.strip()
+        except (RateLimitError, APIError) as e:
+            last_exc = e
+            if attempt < _MAX_RETRIES - 1:
+                wait = _INITIAL_BACKOFF * (2 ** attempt)
+                time.sleep(wait)
+        except Exception as e:
+            last_exc = e
+            break
+    return ""
 
 def parse_intent(user_text: str) -> dict:
     """Parse user query into structured routing parameters."""

@@ -1,0 +1,10 @@
+{
+  "version": "1.1",
+  "last_trained": "2026-07-01T11:16:42.037361",
+  "metrics": {
+    "yield_r2": null,
+    "failure_auc": null
+  },
+  "backup_dir": "C:\\Users\\Asus\\Desktop\\Opencode_research\\Research-Wiki\\code\\phase-2-training\\models\\backup_20260701_111456",
+  "_last_train_output": ""
+}
