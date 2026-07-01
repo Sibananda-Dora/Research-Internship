@@ -13,6 +13,17 @@ frontend/.env
 frontend/dist/
 node_modules/
 
+# Project docs / knowledge base (not code)
+.agents/
+.obsidian/
+backlog/
+wiki/
+AGENTS.md
+Algorithm_Architecture_and_Query_Coverage.md
+CURRENT_STATE.md
+GEMINI.md
+instruct.md
+
 # IDE
 .idea/
 .vscode/
@@ -26,3 +37,5 @@ Thumbs.db
 # ML artifacts
 code/phase-2-training/models/backup_*/
 code/phase-2-training/__pycache__/
+
+.env
