@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
-import { ShieldAlert, Cpu, RefreshCw, CheckCircle, AlertCircle, Layout } from 'lucide-react';
+import { ShieldAlert, Cpu, RefreshCw, CheckCircle, AlertCircle, Layout, Activity, AlertTriangle } from 'lucide-react';
+import { LineChart, Line, AreaChart, Area, ComposedChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 
 const FarmerDashboard = lazy(() => import('./components/FarmerDashboard'));
 const AnalystDashboard = lazy(() => import('./components/AnalystDashboard'));
@@ -52,7 +53,18 @@ export default function App() {
   const [pipelineTaskId, setPipelineTaskId] = useState(null);
   const [pipelineStatus, setPipelineStatus] = useState(null);
   const [pipelineModal, setPipelineModal] = useState(false);
+  const [currentStreamDate, setCurrentStreamDate] = useState(null);
+  const [baselineTelemetry, setBaselineTelemetry] = useState(null);
   const pollingRef = useRef(null);
+
+  // Stream Modal State
+  const [streamModal, setStreamModal] = useState(false);
+  const [streamDistrict, setStreamDistrict] = useState('Ganjam');
+  const [streamYear, setStreamYear] = useState(2024);
+  const [streamSeason, setStreamSeason] = useState('Kharif');
+  const [streamPrediction, setStreamPrediction] = useState(null);
+  const [streamTelemetry, setStreamTelemetry] = useState(null);
+  const [streamHistory, setStreamHistory] = useState([]);
 
   // Weather simulation modifier state
   const [simulating, setSimulating] = useState(false);
@@ -162,6 +174,34 @@ export default function App() {
     };
     fetchCoordPrediction();
   }, [selectedCoordinate, selectedYear, selectedSeason]);
+
+  // Real-Time Digital Twin WebSocket Connection
+  useEffect(() => {
+    const ws = new WebSocket(`ws://127.0.0.1:8000/ws/farm-stream`);
+    
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === "REAL_TIME_UPDATE") {
+        setStreamPrediction(data.prediction);
+        setStreamTelemetry(data.telemetry);
+        setCurrentStreamDate(data.date);
+        if (!baselineTelemetry) {
+          setBaselineTelemetry(data.telemetry);
+        }
+        
+        setStreamHistory(prev => {
+            const newPoint = {
+                name: `${data.date.substring(4,6)}/${data.date.substring(6,8)}`,
+                yield: data.prediction.predicted_yield,
+                failureRisk: data.prediction.failure_probability * 100
+            };
+            return [...prev, newPoint].slice(-40);
+        });
+      }
+    };
+
+    return () => ws.close();
+  }, []);
 
   // Fetch pipeline version on mount
   useEffect(() => {
@@ -319,11 +359,29 @@ export default function App() {
     setTimeout(() => handleSimulationSubmit(), 500);
   };
 
+  // Stream state
+  const [isStreaming, setIsStreaming] = useState(false);
+
+  const toggleStream = async () => {
+    const action = isStreaming ? 'stop' : 'start';
+    if (action === 'start') setStreamHistory([]); // Reset chart for new stream
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/stream/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, district: streamDistrict, year: streamYear })
+      });
+      if (res.ok) setIsStreaming(!isStreaming);
+    } catch (e) {
+      console.error("Failed to toggle stream", e);
+    }
+  };
+
   return (
     <div className="dashboard-container">
       <header className="glass-card" style={{ border: 'none', background: 'rgba(18,20,26,0.4)' }}>
         <div className="title-section" style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <div style={{ background: 'rgba(6,182,212,0.15)', padding: '10px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: 'rgba(99, 102, 241,0.15)', padding: '10px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <Cpu size={32} className="text-cyan" />
           </div>
           <div>
@@ -334,6 +392,14 @@ export default function App() {
             </p>
           </div>
           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <button
+              onClick={() => setStreamModal(true)}
+              className="send-btn"
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 14px', fontSize: '0.8rem', background: 'rgba(99, 102, 241, 0.2)', border: '1px solid rgba(99, 102, 241, 0.5)', color: '#a5b4fc' }}
+            >
+              <Cpu size={14} className={isStreaming ? 'text-healthy pulse spin' : ''} />
+              {isStreaming ? 'Live Simulator Running' : 'Live Twin Simulator'}
+            </button>
             <div className="role-toggle">
               <button className={userRole === 'farmer' ? 'active' : ''} onClick={() => setUserRole('farmer')}>👨‍🌾 Farmer</button>
               <button className={userRole === 'analyst' ? 'active' : ''} onClick={() => setUserRole('analyst')}>📊 Analyst</button>
@@ -468,12 +534,268 @@ export default function App() {
       />
       </Suspense>
 
+      {/* Live Twin Simulator Modal */}
+      {streamModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, backdropFilter: 'blur(8px)' }}>
+          <div className="glass-card" style={{ maxWidth: '1250px', width: '95%', maxHeight: '92vh', overflowY: 'auto', padding: '36px', display: 'flex', flexDirection: 'column', gap: '28px', border: '1px solid rgba(99, 102, 241,0.3)' }}>
+            
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '16px' }}>
+              <div>
+                <h2 style={{ fontSize: '1.5rem', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <Cpu size={24} className="text-cyan" /> Live Digital Twin Simulation
+                  {isStreaming && <span style={{ fontSize: '0.75rem', padding: '4px 8px', background: 'rgba(239, 68, 68, 0.2)', color: '#fca5a5', borderRadius: '4px', border: '1px solid rgba(239, 68, 68, 0.4)', animation: 'pulse 2s infinite' }}>LIVE MQTT STREAM</span>}
+                </h2>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '6px' }}>Real-time telemetry ingestion and AI inference via MQTT/WebSockets.</p>
+              </div>
+              <button onClick={() => setStreamModal(false)} className="toggle-btn" style={{ padding: '8px 12px' }}>Close</button>
+            </div>
+
+            <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'flex-end', background: 'rgba(0,0,0,0.2)', padding: '20px', borderRadius: '12px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>District</label>
+                <select value={streamDistrict} onChange={(e) => setStreamDistrict(e.target.value)} disabled={isStreaming} style={{ padding: '10px 14px', borderRadius: '6px' }}>
+                  {districts.map(d => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Year</label>
+                <select value={streamYear} onChange={(e) => setStreamYear(parseInt(e.target.value))} disabled={isStreaming} style={{ padding: '10px 14px', borderRadius: '6px' }}>
+                  {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Season</label>
+                <select value={streamSeason} onChange={(e) => setStreamSeason(e.target.value)} disabled={isStreaming} style={{ padding: '10px 14px', borderRadius: '6px' }}>
+                  <option value="Kharif">Kharif</option><option value="Rabi">Rabi</option>
+                </select>
+              </div>
+              <div style={{ display: 'flex', gap: '12px', marginLeft: 'auto' }}>
+                <button
+                    onClick={toggleStream}
+                    style={{
+                    display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 20px', fontSize: '0.95rem',
+                    background: isStreaming ? 'rgba(239, 68, 68, 0.2)' : 'rgba(34, 197, 94, 0.2)',
+                    color: isStreaming ? '#fca5a5' : '#86efac',
+                    border: `1px solid ${isStreaming ? 'rgba(239, 68, 68, 0.4)' : 'rgba(34, 197, 94, 0.4)'}`,
+                    borderRadius: '6px', cursor: 'pointer', fontWeight: 600
+                    }}
+                >
+                    <RefreshCw size={16} className={isStreaming ? 'spin' : ''} />
+                    {isStreaming ? 'Stop Simulation' : (streamPrediction ? 'Restart Simulation' : 'Start Simulation')}
+                </button>
+                {streamPrediction && !isStreaming && (
+                    <button
+                        onClick={() => {
+                            setStreamPrediction(null);
+                            setStreamHistory([]);
+                            setStreamTelemetry(null);
+                            setBaselineTelemetry(null);
+                        }}
+                        style={{
+                            padding: '10px 20px', fontSize: '0.95rem',
+                            background: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)',
+                            border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', cursor: 'pointer', fontWeight: 500
+                        }}
+                    >
+                        Reset
+                    </button>
+                )}
+              </div>
+            </div>
+
+            {streamPrediction ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
+                
+                {/* Top row: Date + Yield side by side */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '32px' }}>
+                  <div className="glass-card" style={{ background: 'rgba(99, 102, 241,0.05)', border: '1px solid rgba(99, 102, 241,0.2)', display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '20px' }}>
+                    <h4 style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', marginBottom: '12px' }}>Simulated Date (t)</h4>
+                    <div style={{ fontSize: '2.8rem', fontFamily: 'monospace', color: '#fff', letterSpacing: '2px' }}>
+                      {currentStreamDate?.substring(0, 4)}-{currentStreamDate?.substring(4, 6)}-{currentStreamDate?.substring(6, 8)}
+                    </div>
+                  </div>
+                  <div className="glass-card" style={{ background: 'rgba(34,197,94,0.05)', border: '1px solid rgba(34,197,94,0.2)', display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '20px' }}>
+                    <h4 style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', marginBottom: '12px' }}>Live Yield Prediction</h4>
+                    <div style={{ fontSize: '3.5rem', fontWeight: 'bold', color: '#86efac', lineHeight: '1' }}>
+                      {streamPrediction.predicted_yield.toFixed(2)} <span style={{ fontSize: '1.2rem', color: 'var(--text-secondary)', fontWeight: 'normal' }}>Q/Acre</span>
+                    </div>
+                    <div style={{ fontSize: '0.95rem', color: 'var(--text-secondary)', marginTop: '8px' }}>
+                      Failure Risk: <span style={{ color: streamPrediction.failure_probability > 0.5 ? '#fca5a5' : '#86efac' }}>{(streamPrediction.failure_probability * 100).toFixed(1)}%</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Live Telemetry Chart — 4 weather vars over 12-week sliding window */}
+                <div className="glass-card" style={{ background: 'rgba(0,0,0,0.2)', padding: '20px' }}>
+                  <h4 style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Activity size={16} /> Live Sensor Telemetry — 84-Day Sliding Window
+                  </h4>
+                  <div style={{ height: '240px', width: '100%' }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={(() => {
+                        if (!streamTelemetry) return [];
+                        return Array.from({ length: 12 }, (_, i) => ({
+                          idx: i,
+                          precipitation: streamTelemetry.PRECTOTCORR[i] || 0,
+                          temperature: streamTelemetry.T2M[i] || 0,
+                          humidity: streamTelemetry.RH2M[i] || 0,
+                          soilMoisture: (streamTelemetry.GWETROOT[i] || 0) * 100
+                        }));
+                      })()} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                        <XAxis dataKey="idx" hide={true} />
+                        <YAxis yAxisId="precip" stroke="#93c5fd" fontSize={11} tick={{ fill: '#93c5fd' }} label={{ value: 'mm', angle: -90, position: 'insideLeft', style: { fill: '#93c5fd', fontSize: 11 } }} />
+                        <YAxis yAxisId="scaled" orientation="right" stroke="#a5b4fc" fontSize={11} tick={{ fill: '#a5b4fc' }} label={{ value: '°C / %', angle: 90, position: 'insideRight', style: { fill: '#a5b4fc', fontSize: 11 } }} />
+                        <Tooltip contentStyle={{ backgroundColor: 'rgba(15,23,42,0.9)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px' }} />
+                        <ReferenceLine x={11} stroke="#fca5a5" strokeDasharray="4 4" strokeWidth={2} label={{ value: 'now', position: 'insideTopRight', fill: '#fca5a5', fontSize: 11 }} />
+                        <Bar yAxisId="precip" dataKey="precipitation" fill="rgba(147,197,253,0.4)" name="Rainfall (mm)" radius={[2,2,0,0]} />
+                        <Line yAxisId="scaled" type="monotone" dataKey="temperature" stroke="#f87171" strokeWidth={2} dot={false} name="Temperature (°C)" />
+                        <Line yAxisId="scaled" type="monotone" dataKey="humidity" stroke="#c4b5fd" strokeWidth={2} dot={false} name="Humidity (%)" />
+                        <Line yAxisId="scaled" type="monotone" dataKey="soilMoisture" stroke="#86efac" strokeWidth={2} dot={false} name="Soil Moisture (%)" />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                {/* Middle row: Yield trajectory + Triggers side by side */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '32px' }}>
+                  <div className="glass-card" style={{ background: 'rgba(0,0,0,0.2)', padding: '16px' }}>
+                    <h4 style={{ color: 'var(--text-secondary)', fontSize: '0.95rem', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Activity size={16} /> Yield & Risk Over Time
+                    </h4>
+                    <div style={{ height: '240px', width: '100%' }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={streamHistory} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                          <XAxis dataKey="name" stroke="rgba(255,255,255,0.4)" fontSize={10} tick={{ fill: 'rgba(255,255,255,0.4)' }} />
+                          <YAxis yAxisId="left" stroke="#86efac" fontSize={10} tick={{ fill: '#86efac' }} />
+                          <YAxis yAxisId="right" orientation="right" stroke="#fca5a5" fontSize={10} tick={{ fill: '#fca5a5' }} />
+                          <Tooltip contentStyle={{ backgroundColor: 'rgba(15,23,42,0.9)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px' }} />
+                          <Line yAxisId="left" type="monotone" dataKey="yield" stroke="#86efac" strokeWidth={3} dot={false} name="Yield (Q/Acre)" animationDuration={300} isAnimationActive={false} />
+                          <Line yAxisId="right" type="monotone" dataKey="failureRisk" stroke="#fca5a5" strokeWidth={2} dot={false} name="Risk (%)" animationDuration={300} isAnimationActive={false} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                  <div className="glass-card" style={{ background: 'rgba(0,0,0,0.2)', borderLeft: '4px solid #fca5a5', padding: '24px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+                    {/* Left Column: Triggers */}
+                    <div>
+                        <h4 style={{ color: '#fca5a5', fontSize: '1.1rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <AlertTriangle size={18} /> Active Triggers
+                        </h4>
+                        <div style={{ display: 'flex', gap: '10px', flexDirection: 'column' }}>
+                            {[
+                              { label: 'Submergence Flooding', icon: '🌊', activeColor: 'rgba(59, 130, 246, 0.2)', activeBorder: 'rgba(59, 130, 246, 0.5)', activeText: '#93c5fd' },
+                              { label: 'Drought Stress', icon: '🏜️', activeColor: 'rgba(245, 158, 11, 0.2)', activeBorder: 'rgba(245, 158, 11, 0.5)', activeText: '#fcd34d' },
+                              { label: 'Thermal Sterility', icon: '🌡️', activeColor: 'rgba(239, 68, 68, 0.2)', activeBorder: 'rgba(239, 68, 68, 0.5)', activeText: '#fca5a5' },
+                              { label: 'Pest/Pathogen Risk', icon: '🦠', activeColor: 'rgba(168, 85, 247, 0.2)', activeBorder: 'rgba(168, 85, 247, 0.5)', activeText: '#d8b4fe' }
+                            ].map(trigger => {
+                                const isActive = streamPrediction.active_triggers?.includes(trigger.label) || (trigger.label === 'Pest/Pathogen Risk' && streamPrediction.failure_probability > 0.4);
+                                return (
+                                    <div key={trigger.label} style={{
+                                        display: 'flex', alignItems: 'center', gap: '12px',
+                                        padding: '12px 16px', borderRadius: '8px',
+                                        background: isActive ? trigger.activeColor : 'rgba(255,255,255,0.02)',
+                                        border: `1px solid ${isActive ? trigger.activeBorder : 'rgba(255,255,255,0.05)'}`,
+                                        opacity: isActive ? 1 : 0.3,
+                                        transition: 'all 0.3s ease'
+                                    }}>
+                                        <div style={{ fontSize: '1.5rem' }}>{trigger.icon}</div>
+                                        <div style={{ color: isActive ? trigger.activeText : 'var(--text-secondary)', fontWeight: isActive ? 600 : 400, fontSize: '1rem', letterSpacing: '0.5px' }}>
+                                            {trigger.label}
+                                        </div>
+                                    </div>
+                                )
+                            })}
+                        </div>
+                    </div>
+                    {/* Right Column: Telemetry */}
+                    <div style={{ borderLeft: '1px solid rgba(255,255,255,0.1)', paddingLeft: '24px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                        <h4 style={{ color: '#93c5fd', fontSize: '1.1rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Activity size={18} /> Live Snapshot
+                        </h4>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', textAlign: 'center' }}>
+                            <div style={{ background: 'rgba(255,255,255,0.03)', padding: '16px 12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                                <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px' }}>Rainfall</div>
+                                <div style={{ fontSize: '2rem', marginBottom: '4px' }}>☔</div>
+                                <div style={{ fontSize: '1.2rem', fontWeight: '600', color: '#f8fafc' }}>{streamTelemetry?.PRECTOTCORR?.[11]?.toFixed(1)}<span style={{fontSize: '0.85rem', color: 'var(--text-secondary)', marginLeft: '4px'}}>mm</span></div>
+                            </div>
+                            <div style={{ background: 'rgba(255,255,255,0.03)', padding: '16px 12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                                <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px' }}>Temp</div>
+                                <div style={{ fontSize: '2rem', marginBottom: '4px' }}>🌡</div>
+                                <div style={{ fontSize: '1.2rem', fontWeight: '600', color: '#f8fafc' }}>{streamTelemetry?.T2M?.[11]?.toFixed(1)}<span style={{fontSize: '0.85rem', color: 'var(--text-secondary)', marginLeft: '4px'}}>°C</span></div>
+                            </div>
+                            <div style={{ background: 'rgba(255,255,255,0.03)', padding: '16px 12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                                <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px' }}>Humidity</div>
+                                <div style={{ fontSize: '2rem', marginBottom: '4px' }}>💧</div>
+                                <div style={{ fontSize: '1.2rem', fontWeight: '600', color: '#f8fafc' }}>{streamTelemetry?.RH2M?.[11]?.toFixed(1)}<span style={{fontSize: '0.85rem', color: 'var(--text-secondary)', marginLeft: '4px'}}>%</span></div>
+                            </div>
+                            <div style={{ background: 'rgba(255,255,255,0.03)', padding: '16px 12px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                                <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px' }}>Moisture</div>
+                                <div style={{ fontSize: '2rem', marginBottom: '4px' }}>🌱</div>
+                                <div style={{ fontSize: '1.2rem', fontWeight: '600', color: '#f8fafc' }}>{((streamTelemetry?.GWETROOT?.[11] || 0) * 100).toFixed(0)}<span style={{fontSize: '0.85rem', color: 'var(--text-secondary)', marginLeft: '4px'}}>%</span></div>
+                            </div>
+                        </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Why Yield Changed insight */}
+                {(baselineTelemetry && streamTelemetry) && (
+                  <div className="glass-card" style={{ background: 'rgba(0,0,0,0.2)', borderLeft: '4px solid #6366f1', padding: '20px' }}>
+                    <h4 style={{ color: '#a5b4fc', fontSize: '0.95rem', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      🔍 Why Yield Changed
+                    </h4>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                      {(() => {
+                        const precipDelta = streamTelemetry.PRECTOTCORR.map((v, i) => v - baselineTelemetry.PRECTOTCORR[i]);
+                        const tempDelta = streamTelemetry.T2M.map((v, i) => v - baselineTelemetry.T2M[i]);
+                        const moistureDelta = streamTelemetry.GWETROOT.map((v, i) => v - baselineTelemetry.GWETROOT[i]);
+                        const maxPrecipWeek = precipDelta.indexOf(Math.max(...precipDelta)) + 1;
+                        const maxTempWeek = tempDelta.indexOf(Math.max(...tempDelta)) + 1;
+                        const minMoistureWeek = moistureDelta.indexOf(Math.min(...moistureDelta)) + 1;
+                        const changes = [];
+                        if (Math.abs(precipDelta[maxPrecipWeek - 1]) > 15) {
+                          changes.push(`Week ${maxPrecipWeek}: Rainfall changed by ${precipDelta[maxPrecipWeek - 1].toFixed(0)}mm → ${precipDelta[maxPrecipWeek - 1] > 0 ? 'Flood risk ↑' : 'Drought risk ↑'} → Yield impact`);
+                        }
+                        if (Math.abs(tempDelta[maxTempWeek - 1]) > 3) {
+                          changes.push(`Week ${maxTempWeek}: Temperature ${tempDelta[maxTempWeek - 1] > 0 ? 'rose' : 'dropped'} by ${Math.abs(tempDelta[maxTempWeek - 1]).toFixed(1)}°C → ${tempDelta[maxTempWeek - 1] > 0 ? 'Heat stress' : 'Cold stress'} → Yield impact`);
+                        }
+                        if (Math.abs(moistureDelta[minMoistureWeek - 1]) > 0.15) {
+                          changes.push(`Week ${minMoistureWeek}: Soil moisture ${moistureDelta[minMoistureWeek - 1] < 0 ? 'dropped' : 'rose'} by ${Math.abs(moistureDelta[minMoistureWeek - 1] * 100).toFixed(0)}% → ${moistureDelta[minMoistureWeek - 1] < 0 ? 'Drought risk ↑' : 'Waterlogging risk ↑'} → Yield impact`);
+                        }
+                        if (streamPrediction.active_triggers?.length > 0) {
+                          changes.push(`Active triggers: ${streamPrediction.active_triggers.join(', ')} → Directly reducing predicted yield`);
+                        }
+                        if (changes.length === 0) {
+                          return <span>No significant telemetry deviation detected. Yield stable.</span>;
+                        }
+                        return changes.map((c, i) => <span key={i}>• {c}</span>);
+                      })()}
+                    </div>
+                    <div style={{ marginTop: '12px', fontSize: '0.85rem', color: '#86efac', fontWeight: 500 }}>
+                      → Telemetry changes drive the yield prediction. As weather data shifts, the ensemble model recalculates yield and risk in real time.
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+                <div style={{ padding: '80px 20px', textAlign: 'center', color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.1)', borderRadius: '12px' }}>
+                    <Cpu size={64} style={{ opacity: 0.2, margin: '0 auto 20px' }} />
+                    <p style={{ fontSize: '1.1rem' }}>{isStreaming ? "Waiting for initial MQTT payload..." : "Select parameters and click Start Simulation to begin the real-time MQTT stream."}</p>
+                </div>
+            )}
+            
+          </div>
+        </div>
+      )}
+
       {/* Pipeline update modal */}
       {pipelineModal && pipelineCheck && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, backdropFilter: 'blur(4px)' }}>
           <div className="glass-card" style={{ maxWidth: '480px', width: '90%', padding: '28px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <h3 style={{ fontSize: '1.1rem', fontWeight: 600 }}>New Data Available</h3>
-            <div style={{ background: 'rgba(6,182,212,0.1)', border: '1px solid rgba(6,182,212,0.3)', borderRadius: '8px', padding: '14px', fontSize: '0.9rem' }}>
+            <div style={{ background: 'rgba(99, 102, 241,0.1)', border: '1px solid rgba(99, 102, 241,0.3)', borderRadius: '8px', padding: '14px', fontSize: '0.9rem' }}>
               <p><strong>{pipelineCheck.new_records} new records</strong> found for year <strong>{pipelineCheck.new_years?.join(', ')}</strong></p>
               <p style={{ color: 'var(--text-secondary)', marginTop: '4px' }}>New data will be merged, models retrained, and the dashboard will hot-reload.</p>
             </div>
@@ -493,12 +815,12 @@ export default function App() {
               <RefreshCw size={18} className="text-cyan spin" /> Updating Models
             </h3>
             <div style={{ width: '100%', height: '6px', background: 'rgba(255,255,255,0.08)', borderRadius: '3px', overflow: 'hidden' }}>
-              <div style={{ width: `${pipelineStatus.progress || 0}%`, height: '100%', background: 'var(--accent-gradient, linear-gradient(90deg, #06b6d4, #3b82f6))', borderRadius: '3px', transition: 'width 0.5s ease' }} />
+              <div style={{ width: `${pipelineStatus.progress || 0}%`, height: '100%', background: 'var(--accent-gradient, linear-gradient(90deg, #6366f1, #3b82f6))', borderRadius: '3px', transition: 'width 0.5s ease' }} />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.85rem' }}>
               {['validate_csv', 'fetch_telemetry', 'merge_data', 'backup_models', 'prepare_data', 'train_models', 'save_version'].map(step => (
                 <div key={step} style={{ display: 'flex', alignItems: 'center', gap: '8px', color: pipelineStatus.step === step ? 'var(--text-primary)' : (DEFAULT_STEPS_ORDER.indexOf(step) < DEFAULT_STEPS_ORDER.indexOf(pipelineStatus.step) ? 'var(--text-secondary)' : 'rgba(255,255,255,0.2)') }}>
-                  <div style={{ width: '18px', height: '18px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: pipelineStatus.step === step ? 'rgba(6,182,212,0.2)' : 'transparent', border: '1px solid', borderColor: pipelineStatus.step === step ? '#06b6d4' : (DEFAULT_STEPS_ORDER.indexOf(step) < DEFAULT_STEPS_ORDER.indexOf(pipelineStatus.step) ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)') }}>
+                  <div style={{ width: '18px', height: '18px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: pipelineStatus.step === step ? 'rgba(99, 102, 241,0.2)' : 'transparent', border: '1px solid', borderColor: pipelineStatus.step === step ? '#6366f1' : (DEFAULT_STEPS_ORDER.indexOf(step) < DEFAULT_STEPS_ORDER.indexOf(pipelineStatus.step) ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)') }}>
                     {DEFAULT_STEPS_ORDER.indexOf(step) < DEFAULT_STEPS_ORDER.indexOf(pipelineStatus.step) ? <CheckCircle size={12} /> : (pipelineStatus.step === step ? <RefreshCw size={10} className="spin" /> : null)}
                   </div>
                   <span>{STEP_LABELS[step] || step}</span>
