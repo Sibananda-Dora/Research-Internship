@@ -5,7 +5,7 @@ import pandas as pd
 import httpx
 import sys
 from typing import List, Optional, Dict
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
 
@@ -637,6 +637,183 @@ def serve_demo_csv():
         for row in reader:
             rows.append(row)
     return {"data": rows, "count": len(rows), "source": "demo_2025_kharif"}
+
+
+# ===================================================================
+# REAL-TIME DIGITAL TWIN STREAM (MQTT + WEBSOCKETS)
+# ===================================================================
+import paho.mqtt.client as mqtt
+import asyncio
+import json
+from collections import deque
+
+main_loop = None
+
+@app.on_event("startup")
+def startup_event():
+    global main_loop
+    main_loop = asyncio.get_running_loop()
+
+# WebSocket connection manager
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: str):
+        for connection in self.active_connections:
+            try:
+                await connection.send_text(message)
+            except Exception:
+                pass
+
+manager = ConnectionManager()
+
+# Farm state buffer (Sliding window of 84 days)
+farm_state = {
+    "PRECTOTCORR": deque([10.0]*84, maxlen=84),
+    "T2M": deque([28.0]*84, maxlen=84),
+    "RH2M": deque([75.0]*84, maxlen=84),
+    "GWETROOT": deque([0.6]*84, maxlen=84)
+}
+
+def on_mqtt_message(client, userdata, msg):
+    try:
+        payload = json.loads(msg.payload.decode())
+        district = payload.get("district", "Ganjam")
+        
+        # 1. Update state buffer with the new day (t -> t+1)
+        farm_state["PRECTOTCORR"].append(payload.get("PRECTOTCORR", 0))
+        farm_state["T2M"].append(payload.get("T2M", 0))
+        farm_state["RH2M"].append(payload.get("RH2M", 0))
+        farm_state["GWETROOT"].append(payload.get("GWETROOT", 0))
+        
+        # 2. Convert 84 days to 12 weekly averages for the ML Model
+        telemetry = {"PRECTOTCORR": [], "T2M": [], "RH2M": [], "GWETROOT": []}
+        precip = list(farm_state["PRECTOTCORR"])
+        t2m = list(farm_state["T2M"])
+        rh2m = list(farm_state["RH2M"])
+        gwet = list(farm_state["GWETROOT"])
+        
+        for w in range(12):
+            telemetry["PRECTOTCORR"].append(round(sum(precip[w*7 : (w+1)*7]), 2))
+            telemetry["T2M"].append(round(sum(t2m[w*7 : (w+1)*7])/7, 2))
+            telemetry["RH2M"].append(round(sum(rh2m[w*7 : (w+1)*7])/7, 2))
+            telemetry["GWETROOT"].append(round(sum(gwet[w*7 : (w+1)*7])/7, 2))
+            
+        # 3. Run Inference on the new state
+        result = run_orchestrator(district, "Kharif", 2024, telemetry, "full_diagnosis")
+        
+        # 4. Broadcast via WebSockets
+        out_msg = json.dumps({
+            "type": "REAL_TIME_UPDATE",
+            "date": payload.get("date"),
+            "district": district,
+            "telemetry": telemetry,
+            "prediction": result
+        })
+        
+        # Schedule the async broadcast from this synchronous MQTT thread
+        if main_loop is not None:
+            asyncio.run_coroutine_threadsafe(manager.broadcast(out_msg), main_loop)
+            print(f"Broadcasted live update for {district} - {payload.get('date')}")
+            
+    except Exception as e:
+        print(f"Error processing MQTT: {e}")
+
+# Start MQTT Client
+try:
+    mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1) if hasattr(mqtt, 'CallbackAPIVersion') else mqtt.Client()
+    mqtt_client.on_message = on_mqtt_message
+    mqtt_client.connect("broker.emqx.io", 1883, 60)
+    mqtt_client.subscribe("odisha_cdt/telemetry/#")
+    mqtt_client.loop_start()
+except Exception as e:
+    print(f"Warning: Could not start MQTT client: {e}")
+
+@app.websocket("/ws/farm-stream")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text() # Keep connection alive
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
+# --- Virtual Sensor Streamer Thread ---
+stream_state = "stopped"
+streaming_thread = None
+import threading
+import time
+import csv
+
+def virtual_sensor_worker(district: str, year: int):
+    global stream_state
+    pub_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1) if hasattr(mqtt, 'CallbackAPIVersion') else mqtt.Client()
+    try:
+        pub_client.connect("broker.emqx.io", 1883, 60)
+    except Exception as e:
+        print(f"Failed to connect publisher: {e}")
+        return
+
+    csv_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "sources", "data", "telemetry", f"{district.lower()}_daily.csv")
+    if not os.path.exists(csv_path):
+        print(f"Telemetry CSV not found: {csv_path}")
+        stream_state = "stopped"
+        return
+
+    start_date = f"{year}0615"
+    with open(csv_path, 'r') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if row['Date'] == start_date:
+                break
+        
+        for row in reader:
+            while stream_state == "paused":
+                time.sleep(0.5)
+            if stream_state == "stopped":
+                break
+            payload = {
+                "district": district,
+                "date": row["Date"],
+                "PRECTOTCORR": float(row["PRECTOTCORR"]),
+                "T2M": float(row["T2M"]),
+                "RH2M": float(row["RH2M"]),
+                "GWETROOT": float(row["GWETROOT"])
+            }
+            pub_client.publish(f"odisha_cdt/telemetry/{district.lower()}", json.dumps(payload))
+            print(f"[STREAM] Sent {district} day {row['Date']}")
+            time.sleep(1.5)
+    stream_state = "stopped"
+
+@app.post("/api/stream/toggle")
+def toggle_stream(request: dict):
+    global stream_state, streaming_thread
+    district = request.get("district", "Ganjam")
+    year = request.get("year", 2024)
+    action = request.get("action", "start")
+    
+    if action == "start":
+        if stream_state == "paused":
+            stream_state = "playing"
+        elif stream_state == "stopped":
+            stream_state = "playing"
+            streaming_thread = threading.Thread(target=virtual_sensor_worker, args=(district, year), daemon=True)
+            streaming_thread.start()
+    elif action == "pause":
+        if stream_state == "playing":
+            stream_state = "paused"
+    elif action == "stop":
+        stream_state = "stopped"
+        
+    return {"status": stream_state}
 
 
 if __name__ == "__main__":
