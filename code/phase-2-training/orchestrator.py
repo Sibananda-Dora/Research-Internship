@@ -20,7 +20,7 @@ import os, sys
 from pydantic import BaseModel, ConfigDict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from predict import CDTPredictor, get_biophysical_triggers, engineer_features
+from predict import CDTPredictor, get_biophysical_triggers, get_trigger_details, engineer_features
 
 VAR_NAMES = ['PRECTOTCORR', 'T2M', 'RH2M', 'GWETROOT']
 
@@ -58,6 +58,7 @@ class GraphState(BaseModel):
     mc_ci:          Optional[Dict]          = None
     mc_std:         Optional[float]         = None
     triggers:       Optional[List[str]]     = None
+    trigger_details: Optional[List[dict]]   = None
 
     # --- final compiled response ---
     response: Optional[Dict]                = None
@@ -125,7 +126,8 @@ def node_triggers(state: GraphState) -> GraphState:
     w_dict = {}
     for vi, vn in enumerate(VAR_NAMES):
         w_dict[vn] = [float(state.weather_48[vi + 4 * w]) for w in range(12)]
-    state.triggers = get_biophysical_triggers(w_dict)
+    state.trigger_details = get_trigger_details(w_dict)
+    state.triggers = [d['label'] for d in state.trigger_details if d['active']]
     return state
 
 
@@ -180,6 +182,7 @@ def _compile_response(state: GraphState) -> Dict:
         'year': state.year,
         'query_type': state.query_type.value,
         'active_triggers': state.triggers or [],
+        'trigger_details': state.trigger_details or [],
         'trace': {
             'layer1_physical': {
                 'district': state.district,

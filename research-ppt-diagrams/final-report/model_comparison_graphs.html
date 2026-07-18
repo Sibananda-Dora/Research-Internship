@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Model Comparison Graphs</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Times New Roman', Times, serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #ffffff;
+            padding: 40px;
+        }
+        .chart-container {
+            width: 800px;
+            margin-bottom: 50px;
+            padding: 20px;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        h2 {
+            text-align: center;
+            color: #1e293b;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="chart-container">
+        <h2>Yield Accuracy & Failure Precision (Higher is Better)</h2>
+        <canvas id="accuracyChart"></canvas>
+    </div>
+
+    <div class="chart-container">
+        <h2>Yield Prediction Error - RMSE (Lower is Better)</h2>
+        <canvas id="errorChart"></canvas>
+    </div>
+
+    <script>
+        // Accuracy Chart (R2 and AUC)
+        const ctx1 = document.getElementById('accuracyChart').getContext('2d');
+        new Chart(ctx1, {
+            type: 'bar',
+            data: {
+                labels: ['Yield R² Score', 'Failure AUC Score'],
+                datasets: [
+                    {
+                        label: 'LSTM (Deep Temporal)',
+                        data: [0.641, 0.685],
+                        backgroundColor: '#94a3b8' // Gray
+                    },
+                    {
+                        label: 'XGBoost (Tabular)',
+                        data: [0.682, 0.663],
+                        backgroundColor: '#60a5fa' // Blue
+                    },
+                    {
+                        label: 'Stacked Ensemble',
+                        data: [0.712, 0.721],
+                        backgroundColor: '#4f46e5' // Deep Indigo
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { position: 'bottom' }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 1.0,
+                        title: { display: true, text: 'Score (0.0 to 1.0)' }
+                    }
+                }
+            }
+        });
+
+        // Error Chart (RMSE)
+        const ctx2 = document.getElementById('errorChart').getContext('2d');
+        new Chart(ctx2, {
+            type: 'bar',
+            data: {
+                labels: ['Yield RMSE (Quintals/Acre)'],
+                datasets: [
+                    {
+                        label: 'LSTM (Deep Temporal)',
+                        data: [4.05],
+                        backgroundColor: '#94a3b8'
+                    },
+                    {
+                        label: 'XGBoost (Tabular)',
+                        data: [3.81],
+                        backgroundColor: '#60a5fa'
+                    },
+                    {
+                        label: 'Stacked Ensemble',
+                        data: [3.63],
+                        backgroundColor: '#10b981' // Green to show it's good it's low
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { position: 'bottom' }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: 'Error Magnitude' }
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html>

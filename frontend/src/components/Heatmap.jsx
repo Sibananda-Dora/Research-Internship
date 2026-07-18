@@ -49,7 +49,7 @@ export default function Heatmap({
   return (
     <div className="glass-card">
       <div className="card-header" style={{ marginBottom: '10px' }}>
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px' }} className="text-cyan">
+          <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px' }} className="text-accent">
           <Eye size={18} />
           LSTM Temporal Attention Weights (Explainable AI)
         </h2>
@@ -66,7 +66,7 @@ export default function Heatmap({
           
           // Compute opacity relative to the highest weight
           const relativeWeight = weight / maxWeight;
-          const baseColor = isSelected ? 'rgba(6, 182, 212,' : 'rgba(6, 182, 212,';
+          const baseColor = isSelected ? 'rgba(56, 189, 248,' : 'rgba(56, 189, 248,';
           const bgOpacity = 0.1 + relativeWeight * 0.85; // Map from 0.1 to 0.95 opacity
           
           const stresses = getWeekStresses(idx);
@@ -74,7 +74,7 @@ export default function Heatmap({
             ? `rgba(245, 158, 11, ${bgOpacity})` 
             : stresses.length > 0 && stresses.some(s => s.includes("Submergence"))
             ? `rgba(239, 68, 68, ${bgOpacity})`
-            : `rgba(6, 182, 212, ${bgOpacity})`;
+            : `rgba(56, 189, 248, ${bgOpacity})`;
 
           return (
             <div
@@ -114,7 +114,7 @@ export default function Heatmap({
       
       <div style={{ display: 'flex', gap: '16px', marginTop: '12px', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '3px', background: 'rgba(6, 182, 212, 0.8)' }}></span>
+          <span style={{ display: 'inline-block', width: '12px', height: '12px', borderRadius: '3px', background: 'rgba(56, 189, 248, 0.8)' }}></span>
           Model Attention Focus
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>

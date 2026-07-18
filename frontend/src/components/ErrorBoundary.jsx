@@ -23,9 +23,9 @@ export default class ErrorBoundary extends React.Component {
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
-          background: '#0a0b0d',
-          color: '#f3f4f6',
-          fontFamily: 'Inter, sans-serif',
+          background: 'var(--bg-primary)',
+          color: 'var(--text-primary)',
+          fontFamily: 'var(--font-sans)',
           padding: '40px'
         }}>
           <div style={{
@@ -36,10 +36,10 @@ export default class ErrorBoundary extends React.Component {
             maxWidth: '500px',
             textAlign: 'center'
           }}>
-            <h2 style={{ color: '#ef4444', marginBottom: '12px', fontSize: '1.4rem' }}>
+            <h2 style={{ color: 'var(--status-failure)', marginBottom: '12px', fontSize: '1.4rem' }}>
               Dashboard Error
             </h2>
-            <p style={{ color: '#9ca3af', marginBottom: '16px', lineHeight: 1.5 }}>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: 1.5 }}>
               A component crashed while rendering. This usually happens when the backend
               returns data in an unexpected format.
             </p>
@@ -48,7 +48,7 @@ export default class ErrorBoundary extends React.Component {
               padding: '12px',
               borderRadius: '8px',
               fontSize: '0.75rem',
-              color: '#f59e0b',
+              color: 'var(--status-stress)',
               textAlign: 'left',
               overflow: 'auto',
               maxHeight: '120px',
@@ -62,8 +62,8 @@ export default class ErrorBoundary extends React.Component {
                 window.location.reload();
               }}
               style={{
-                background: '#06b6d4',
-                color: '#000',
+                background: 'var(--accent)',
+                color: 'var(--on-accent)',
                 border: 'none',
                 padding: '10px 24px',
                 borderRadius: '8px',

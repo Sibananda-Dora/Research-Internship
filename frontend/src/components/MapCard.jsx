@@ -13,7 +13,7 @@ export default function MapCard({
   return (
     <div className="glass-card map-card">
       <div className="card-header">
-        <h2 className="text-cyan" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '1.1rem' }}>
+        <h2 className="text-accent" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '1.1rem' }}>
           <Layers size={18} />
           {coordinateMode 
             ? `Pinpoint: ${selectedCoordinate ? `${selectedCoordinate.lat.toFixed(3)}°N, ${selectedCoordinate.lng.toFixed(3)}°E` : 'Click the map to select your field'}`

@@ -1,10 +1,11 @@
-import os
-import math
+import os, math, threading
 import numpy as np
 import pandas as pd
 import httpx
 import sys
-from typing import List, Optional, Dict
+import time
+import json
+from typing import List, Optional, Dict, Tuple
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
@@ -183,6 +184,19 @@ def get_telemetry(district: str, year: int, season: str):
 
 
 # ===================================================================
+# MOCK TELEMETRY HELPER (used as fallback by multiple endpoints)
+# ===================================================================
+
+def _mock_telemetry():
+    return {
+        "PRECTOTCORR": [10.0 + (i * 2) % 30 for i in range(12)],
+        "T2M": [28.0 + math.sin(i) * 2 for i in range(12)],
+        "RH2M": [75.0 + math.cos(i) * 10 for i in range(12)],
+        "GWETROOT": [0.6 - i * 0.02 for i in range(12)]
+    }
+
+
+# ===================================================================
 # PREDICTION ENDPOINTS — routed through the orchestrator
 # ===================================================================
 
@@ -200,12 +214,7 @@ def get_prediction(
         telemetry = data["telemetry"]
     except HTTPException:
         is_mocked = True
-        telemetry = {
-            "PRECTOTCORR": [10.0 + (i * 2) % 30 for i in range(12)],
-            "T2M": [28.0 + math.sin(i) * 2 for i in range(12)],
-            "RH2M": [75.0 + math.cos(i) * 10 for i in range(12)],
-            "GWETROOT": [0.6 - i * 0.02 for i in range(12)]
-        }
+        telemetry = _mock_telemetry()
 
     try:
         result = run_orchestrator(district, season, year, telemetry, query_type)
@@ -224,12 +233,7 @@ def simulate_scenario(request: SimulationRequest, query_type: str = Query('what_
         base_telemetry = base_data["telemetry"]
     except HTTPException:
         is_mocked = True
-        base_telemetry = {
-            "PRECTOTCORR": [10.0 + (i * 2) % 30 for i in range(12)],
-            "T2M": [28.0 + math.sin(i) * 2 for i in range(12)],
-            "RH2M": [75.0 + math.cos(i) * 10 for i in range(12)],
-            "GWETROOT": [0.6 - i * 0.02 for i in range(12)]
-        }
+        base_telemetry = _mock_telemetry()
 
     sim_telemetry = {
         "PRECTOTCORR": [max(0.0, base_telemetry["PRECTOTCORR"][i] * request.precip_modifiers[i]) for i in range(12)],
@@ -263,7 +267,7 @@ def ask_llm(request: AskRequest):
 
     # Resolve lat/lon to nearest district if provided
     if request.latitude is not None and request.longitude is not None:
-        district = find_nearest_district(request.latitude, request.longitude)
+        district = find_district_by_boundary(request.latitude, request.longitude)
 
     # Parse intent via Groq
     parsed = parse_intent(request.query)
@@ -287,16 +291,15 @@ def ask_llm(request: AskRequest):
         telemetry = data["telemetry"]
     except HTTPException:
         is_mocked = True
-        telemetry = {
-            "PRECTOTCORR": [10.0 + (i * 2) % 30 for i in range(12)],
-            "T2M": [28.0 + math.sin(i) * 2 for i in range(12)],
-            "RH2M": [75.0 + math.cos(i) * 10 for i in range(12)],
-            "GWETROOT": [0.6 - i * 0.02 for i in range(12)]
-        }
+        telemetry = _mock_telemetry()
 
     result = run_orchestrator(district, season, year, telemetry, query_type)
     result["is_mocked"] = is_mocked
-    advisory = format_advisory(result)
+    advisory = format_advisory(
+        result,
+        attention_weights=result.get("attention_weights"),
+        telemetry=telemetry,
+    )
 
     return {
         "advisory": advisory,
@@ -329,6 +332,68 @@ DISTRICT_COORDS = {
     "Rayagada": (19.1721, 83.4217), "Sambalpur": (21.4625, 83.9817),
     "Sonepur": (21.0321, 83.9117), "Sundargarh": (22.1221, 84.0317)
 }
+
+
+# ---------------------------------------------------------------------------
+# District boundary resolver (point-in-polygon)
+# ---------------------------------------------------------------------------
+# Load the Odisha district boundary GeoJSON once at startup so lat/lng can be
+# resolved to the exact district it falls inside (instead of nearest centroid).
+# A point outside every district boundary resolves to "Unknown".
+def _load_district_geojson():
+    path = os.path.join(os.path.dirname(__file__), "odisha_districts.geojson")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"[warn] could not load odisha_districts.geojson: {e}")
+        return {"features": []}
+
+
+DISTRICT_GEOJSON = _load_district_geojson()
+
+
+def _point_in_ring(lat: float, lon: float, ring: List[List[float]]) -> bool:
+    """Ray-casting algorithm: True if (lat, lon) is inside the ring.
+
+    GeoJSON ring coords are [lon, lat]; the ray extends to the right (+lon).
+    """
+    inside = False
+    n = len(ring)
+    for i in range(n):
+        x1, y1 = ring[i]
+        x2, y2 = ring[(i + 1) % n]
+        if ((y1 > lat) != (y2 > lat)) and (lon < (x2 - x1) * (lat - y1) / (y2 - y1) + x1):
+            inside = not inside
+    return inside
+
+
+def _iter_exterior_rings(geom: dict):
+    """Yield exterior rings ([lon, lat] point lists) for a Polygon or MultiPolygon."""
+    gtype = geom.get("type")
+    if gtype == "MultiPolygon":
+        for polygon in geom.get("coordinates", []):
+            if polygon:
+                yield polygon[0]
+    elif gtype == "Polygon":
+        for polygon in [geom.get("coordinates", [])]:
+            if polygon:
+                yield polygon[0]
+
+
+def find_district_by_boundary(lat: float, lon: float) -> str:
+    """Return the district a lat/lng falls inside, or 'Unknown' if outside Odisha.
+
+    Handles both Polygon (28 districts) and MultiPolygon (2 districts) geometry.
+    """
+    for feat in DISTRICT_GEOJSON.get("features", []):
+        name = feat.get("properties", {}).get("name")
+        geom = feat.get("geometry") or {}
+        for ring in _iter_exterior_rings(geom):
+            if _point_in_ring(lat, lon, ring):
+                return name
+    return "Unknown"
+
 
 class CoordinateRequest(BaseModel):
     latitude: float
@@ -368,6 +433,13 @@ class CoordinatePredictRequest(BaseModel):
     longitude: float
     year: int
     season: str
+
+class RealtimeCoordinateRequest(BaseModel):
+    latitude: float
+    longitude: float
+    district: Optional[str] = None
+    year: int = 2024
+    season: str = "Kharif"
 
 
 def find_nearest_district(lat: float, lon: float) -> str:
@@ -426,7 +498,7 @@ async def fetch_nasa_power_telemetry(lat: float, lon: float, year: int, season: 
 
 @app.post("/api/telemetry/coordinate", response_model=CoordinateTelemetryResponse)
 async def get_coordinate_telemetry(request: CoordinateRequest):
-    nearest = find_nearest_district(request.latitude, request.longitude)
+    nearest = find_district_by_boundary(request.latitude, request.longitude)
     nasa_data = await fetch_nasa_power_telemetry(request.latitude, request.longitude, request.year, request.season)
     if nasa_data:
         return CoordinateTelemetryResponse(
@@ -464,19 +536,14 @@ class CoordinatePredictResponse(PredictionResponse):
 @app.post("/api/predict/coordinate", response_model=CoordinatePredictResponse)
 async def predict_coordinate(request: CoordinatePredictRequest,
                              query_type: str = Query('full_diagnosis', description="Model routing")):
-    nearest = find_nearest_district(request.latitude, request.longitude)
+    nearest = find_district_by_boundary(request.latitude, request.longitude)
     is_mocked = False
     try:
         data = get_telemetry(nearest, request.year, request.season)
         telemetry = data["telemetry"]
     except HTTPException:
         is_mocked = True
-        telemetry = {
-            "PRECTOTCORR": [10.0 + (i * 2) % 30 for i in range(12)],
-            "T2M": [28.0 + math.sin(i) * 2 for i in range(12)],
-            "RH2M": [75.0 + math.cos(i) * 10 for i in range(12)],
-            "GWETROOT": [0.6 - i * 0.02 for i in range(12)]
-        }
+        telemetry = _mock_telemetry()
     try:
         result = run_orchestrator(nearest, request.season, request.year, telemetry, query_type)
     except ValueError as e:
@@ -517,10 +584,216 @@ async def simulate_coordinate(request: CoordinateSimulationRequest,
 
 
 # ===================================================================
+# REAL-TIME WEATHER MONITOR (Open-Meteo + Temporal Interpolation)
+# ===================================================================
+
+# Cache for interpolation: {lat_lng_key: {"t0": timestamp, "v0": {...}, "t1": timestamp, "v1": {...}}}
+realtime_cache: Dict[str, dict] = {}
+
+def _get_climatology(district: str, season: str):
+    """20-year average weekly telemetry for a district/season."""
+    if df_dataset.empty:
+        return None
+    sub = df_dataset[
+        (df_dataset["District"].str.lower() == district.lower()) &
+        (df_dataset["Season"].str.lower() == season.lower())
+    ]
+    if sub.empty:
+        return None
+    result = {}
+    for var in ["PRECTOTCORR", "T2M", "RH2M", "GWETROOT"]:
+        vals = []
+        for w in range(1, 13):
+            col = f"W{w}_{var}"
+            vals.append(round(float(sub[col].mean()), 2) if col in sub.columns else 0.0)
+        result[var] = vals
+    return result
+
+def _interpolate_snapshot(old: dict, new: dict, t0: float, t1: float, now: float) -> dict:
+    frac = (now - t0) / (t1 - t0) if t1 > t0 else 1.0
+    frac = max(0.0, min(1.0, frac))
+    return {
+        "T2M": round(old["T2M"] + (new["T2M"] - old["T2M"]) * frac, 2),
+        "RH2M": round(old["RH2M"] + (new["RH2M"] - old["RH2M"]) * frac, 2),
+        "GWETROOT": round(old["GWETROOT"] + (new["GWETROOT"] - old["GWETROOT"]) * frac, 4),
+        "PRECTOTCORR": new["PRECTOTCORR"],
+    }
+
+import datetime as dt
+
+def _aggregate_hourly_to_weekly(hourly_data: dict, season_start: dt.date) -> tuple:
+    """Aggregate 16-day hourly forecast into weekly averages relative to season start.
+    Returns (weekly_dict, forecast_week_mask) where forecast_week_mask[wk] = True if forecast covers that week."""
+    times = hourly_data.get("time", [])
+    vars_h = {"T2M": "temperature_2m", "RH2M": "relative_humidity_2m", "PRECTOTCORR": "precipitation"}
+    weekly = {"PRECTOTCORR": [0]*12, "T2M": [0]*12, "RH2M": [0]*12, "GWETROOT": [0]*12}
+    counts = [0]*12
+    mask = [False]*12
+
+    for i, t_str in enumerate(times):
+        try:
+            h = dt.datetime.fromisoformat(t_str)
+        except ValueError:
+            h = dt.datetime.strptime(t_str, "%Y-%m-%dT%H:%M")
+        d = h.date()
+        days_from = (d - season_start).days
+        if not (0 <= days_from < 84):
+            continue
+        wk = days_from // 7
+        for k, api_key in vars_h.items():
+            vals = hourly_data.get(api_key, [])
+            if i < len(vals) and vals[i] is not None:
+                weekly[k][wk] += float(vals[i])
+        counts[wk] += 1
+        mask[wk] = True
+
+    for wk in range(12):
+        if counts[wk] > 0:
+            for k in ["T2M", "RH2M"]:
+                weekly[k][wk] = round(weekly[k][wk] / counts[wk], 2)
+            weekly["PRECTOTCORR"][wk] = round(weekly["PRECTOTCORR"][wk], 2)
+
+    return weekly, mask
+
+
+@app.post("/api/realtime/coordinate")
+async def realtime_coordinate(request: RealtimeCoordinateRequest):
+    cache_key = f"{request.latitude:.4f}_{request.longitude:.4f}"
+    now = time.time()
+    provided = (request.district or "").strip()
+    # A pinned/field coordinate may carry a non-district label (e.g. "Unknown").
+    # Resolve to the nearest valid district so the prediction pipeline (which
+    # raises on cold-start districts) still produces a result.
+    district = provided if provided in DISTRICT_COORDS else find_district_by_boundary(request.latitude, request.longitude)
+    year = request.year
+    season = request.season
+    today = dt.date.today()
+    season_month = 6 if season.lower() == "kharif" else 11
+    season_day = 15 if season.lower() == "kharif" else 1
+    season_start = dt.date(year, season_month, season_day)
+    current_week = max(0, min(11, (today - season_start).days // 7))
+
+    # 1. Fetch Open-Meteo (current + 16-day hourly) in one call
+    snapshot = None
+    is_mocked = False
+    forecast_weekly = None
+    forecast_mask = None
+    data = None
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                "https://api.open-meteo.com/v1/forecast",
+                params={
+                    "latitude": request.latitude,
+                    "longitude": request.longitude,
+                    "current": "temperature_2m,relative_humidity_2m,precipitation",
+                    "hourly": "temperature_2m,relative_humidity_2m,precipitation,soil_moisture_9_to_27cm",
+                    "timezone": "auto",
+                    "forecast_days": 16,
+                }
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        current = data.get("current", {})
+        hourly = data.get("hourly", {})
+        soil_hourly = hourly.get("soil_moisture_9_to_27cm", []) if hourly else []
+        # Use hourly forecast precipitation for current hour (accumulated mm, not instantaneous rate)
+        hourly_precip = hourly.get("precipitation", []) if hourly else []
+        precip = hourly_precip[0] if hourly_precip else current.get("precipitation", 0)
+        snapshot = {
+            "T2M": current.get("temperature_2m", 30),
+            "RH2M": current.get("relative_humidity_2m", 70),
+            "PRECTOTCORR": precip,
+            "GWETROOT": soil_hourly[0] if soil_hourly else 0.5,
+        }
+
+        # Aggregate hourly forecast to weekly
+        forecast_weekly, forecast_mask = _aggregate_hourly_to_weekly(hourly, season_start)
+
+        # Update cache for interpolation
+        cached_entry = realtime_cache.get(cache_key)
+        if cached_entry:
+            realtime_cache[cache_key] = {
+                "t0": cached_entry.get("t1", now), "v0": cached_entry.get("v1", snapshot),
+                "t1": now, "v1": snapshot,
+            }
+        else:
+            realtime_cache[cache_key] = {"t0": now, "v0": snapshot, "t1": now, "v1": snapshot}
+
+    except Exception as e:
+        cached_entry = realtime_cache.get(cache_key)
+        if cached_entry:
+            snapshot = _interpolate_snapshot(
+                cached_entry["v0"], cached_entry["v1"],
+                cached_entry["t0"], cached_entry["t1"], now
+            )
+        else:
+            snapshot = {"T2M": 30, "RH2M": 70, "PRECTOTCORR": 0, "GWETROOT": 0.5}
+        is_mocked = True
+
+    # 2. Build blended 12-week profile
+    # Base: 20-year climatology
+    clim = _get_climatology(district, season)
+    if clim:
+        weekly = {var: list(clim[var]) for var in ["PRECTOTCORR", "T2M", "RH2M", "GWETROOT"]}
+        week_sources = ["climatology"] * 12
+    else:
+        weekly = {
+            "PRECTOTCORR": [round(10 + 15 * math.sin(i * math.pi / 11), 2) for i in range(12)],
+            "T2M": [round(27 + 5 * math.sin(i * math.pi / 11 - 0.3), 2) for i in range(12)],
+            "RH2M": [round(70 + 15 * math.sin(i * math.pi / 11 + 0.5), 2) for i in range(12)],
+            "GWETROOT": [round(max(0, min(1, 0.5 + 0.2 * math.sin(i * math.pi / 11 - 0.4))), 4) for i in range(12)],
+        }
+        week_sources = ["synthetic"] * 12
+
+    # Overlay forecast where available
+    if forecast_weekly and forecast_mask:
+        for wk in range(12):
+            if forecast_mask[wk]:
+                for var in ["T2M", "RH2M", "PRECTOTCORR"]:
+                    if forecast_weekly[var][wk] is not None:
+                        weekly[var][wk] = forecast_weekly[var][wk]
+                week_sources[wk] = "forecast"
+
+    # Overlay today's snapshot at current week (highest priority)
+    week_sources[current_week] = "now"
+    weekly["T2M"][current_week] = round(snapshot["T2M"], 2)
+    weekly["RH2M"][current_week] = round(snapshot["RH2M"], 2)
+    # NOTE: keep PRECTOTCORR as a weekly-scale value (climatology/forecast) for
+    # the current week so the 12-week chart bar matches the other weeks' scale.
+    # The instantaneous snapshot precip is still shown in the real-time gauge via
+    # `telemetry.PRECTOTCORR` (frontend), which is correct for a current reading.
+    weekly["GWETROOT"][current_week] = round(snapshot["GWETROOT"], 4)
+
+    # 3. Run prediction on blended profile
+    try:
+        # Pass weekly dict — run_orchestrator calls telemetry_to_flat48 internally
+        result = run_orchestrator(district, season, year, weekly, query_type_str="full_diagnosis")
+    except Exception as e:
+        result = None
+
+    return {
+        "telemetry": snapshot,
+        "telemetry_weekly": weekly,
+        "week_sources": week_sources,
+        "current_week": current_week,
+        "prediction": result,
+        "fetched_at": dt.datetime.fromtimestamp(
+            realtime_cache.get(cache_key, {}).get("t1", now)
+        ).isoformat() if cache_key in realtime_cache else None,
+        "nearest_district": district,
+        "is_mocked": is_mocked,
+        "season_source": "climatology",
+    }
+
+
+# ===================================================================
 # PIPELINE UPDATE ENDPOINTS
 # ===================================================================
 
-import uuid, threading, time, traceback
+import uuid, traceback
 from update_pipeline import (
     check_new_data, run_pipeline, get_current_version,
     get_dataset_info, DEFAULT_STEPS
@@ -640,11 +913,10 @@ def serve_demo_csv():
 
 
 # ===================================================================
-# REAL-TIME DIGITAL TWIN STREAM (MQTT + WEBSOCKETS)
+# REAL-TIME HISTORICAL REPLAY STREAM (WebSocket Direct)
 # ===================================================================
-import paho.mqtt.client as mqtt
 import asyncio
-import json
+import csv
 from collections import deque
 
 main_loop = None
@@ -652,9 +924,11 @@ main_loop = None
 @app.on_event("startup")
 def startup_event():
     global main_loop
-    main_loop = asyncio.get_running_loop()
+    try:
+        main_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        main_loop = None
 
-# WebSocket connection manager
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
@@ -664,7 +938,8 @@ class ConnectionManager:
         self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
 
     async def broadcast(self, message: str):
         for connection in self.active_connections:
@@ -675,145 +950,298 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-# Farm state buffer (Sliding window of 84 days)
-farm_state = {
-    "PRECTOTCORR": deque([10.0]*84, maxlen=84),
-    "T2M": deque([28.0]*84, maxlen=84),
-    "RH2M": deque([75.0]*84, maxlen=84),
-    "GWETROOT": deque([0.6]*84, maxlen=84)
-}
+# Stream sessions
+stream_sessions: Dict[str, dict] = {}
+_session_counter = 0
 
-def on_mqtt_message(client, userdata, msg):
-    try:
-        payload = json.loads(msg.payload.decode())
-        district = payload.get("district", "Ganjam")
-        
-        # 1. Update state buffer with the new day (t -> t+1)
-        farm_state["PRECTOTCORR"].append(payload.get("PRECTOTCORR", 0))
-        farm_state["T2M"].append(payload.get("T2M", 0))
-        farm_state["RH2M"].append(payload.get("RH2M", 0))
-        farm_state["GWETROOT"].append(payload.get("GWETROOT", 0))
-        
-        # 2. Convert 84 days to 12 weekly averages for the ML Model
-        telemetry = {"PRECTOTCORR": [], "T2M": [], "RH2M": [], "GWETROOT": []}
-        precip = list(farm_state["PRECTOTCORR"])
-        t2m = list(farm_state["T2M"])
-        rh2m = list(farm_state["RH2M"])
-        gwet = list(farm_state["GWETROOT"])
-        
-        for w in range(12):
-            telemetry["PRECTOTCORR"].append(round(sum(precip[w*7 : (w+1)*7]), 2))
-            telemetry["T2M"].append(round(sum(t2m[w*7 : (w+1)*7])/7, 2))
-            telemetry["RH2M"].append(round(sum(rh2m[w*7 : (w+1)*7])/7, 2))
-            telemetry["GWETROOT"].append(round(sum(gwet[w*7 : (w+1)*7])/7, 2))
-            
-        # 3. Run Inference on the new state
-        result = run_orchestrator(district, "Kharif", 2024, telemetry, "full_diagnosis")
-        
-        # 4. Broadcast via WebSockets
+SEASON_START = {"Kharif": "0615", "Rabi": "1101"}
+
+def _generate_synthetic_daily(district: str, year: int, season: str):
+    import math, random
+    rng = random.Random(hash(f"{district}{year}{season}"))
+    month, day = int(SEASON_START[season][:2]), int(SEASON_START[season][2:])
+    start_dt = dt.datetime(year, month, day)
+    days = 120 if season == "Kharif" else 84
+    data = []
+    for i in range(days):
+        dt = start_dt + __import__('datetime').timedelta(days=i)
+        progress = i / days
+        data.append({
+            "date": dt.strftime("%Y%m%d"),
+            "PRECTOTCORR": round(max(0, 8 + rng.gauss(0, 5) + 20 * math.sin(progress * math.pi)), 2),
+            "T2M": round(27 + 5 * math.sin(progress * math.pi - 0.3) + rng.gauss(0, 0.8), 2),
+            "RH2M": round(70 + 15 * math.sin(progress * math.pi + 0.5) + rng.gauss(0, 4), 2),
+            "GWETROOT": round(max(0, min(1, 0.5 + 0.2 * math.sin(progress * math.pi - 0.4) + rng.gauss(0, 0.04))), 4),
+        })
+    return data
+
+def _load_daily_data(district: str, year: int, season: str):
+    csv_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                           "sources", "data", "telemetry", f"{district.lower()}_daily.csv")
+    if os.path.exists(csv_path):
+        with open(csv_path, 'r') as f:
+            reader = csv.DictReader(f)
+            data = []
+            for r in reader:
+                if "date" not in r and "Date" in r:
+                    r["date"] = r.pop("Date")
+                data.append(r)
+            return data
+    print(f"[STREAM] CSV not found: {csv_path}, using synthetic data")
+    return _generate_synthetic_daily(district, year, season)
+
+def _prefill_buffer(daily_data, start_idx):
+    buf = deque(maxlen=84)
+    prefill_start = max(0, start_idx - 84)
+    for i in range(prefill_start, start_idx):
+        d = daily_data[i]
+        buf.append([float(d["PRECTOTCORR"]), float(d["T2M"]), float(d["RH2M"]), float(d["GWETROOT"])])
+    while len(buf) < 84 and daily_data:
+        d = daily_data[0]
+        buf.appendleft([float(d["PRECTOTCORR"]), float(d["T2M"]), float(d["RH2M"]), float(d["GWETROOT"])])
+    return buf
+
+def _buffer_to_weekly(buf):
+    t = {"PRECTOTCORR": [], "T2M": [], "RH2M": [], "GWETROOT": []}
+    lst = list(buf)
+    for w in range(12):
+        week = lst[w*7 : (w+1)*7]
+        t["PRECTOTCORR"].append(round(sum(r[0] for r in week), 2))
+        t["T2M"].append(round(sum(r[1] for r in week) / 7, 2))
+        t["RH2M"].append(round(sum(r[2] for r in week) / 7, 2))
+        t["GWETROOT"].append(round(sum(r[3] for r in week) / 7, 2))
+    return t
+
+def _season_weekly(daily_data, start_idx, current_idx):
+    """Season-anchored 12-week aggregates for DISPLAY only.
+
+    Week w = the season's own days [start_idx + 7w, start_idx + 7(w+1)).
+    Unlike _buffer_to_weekly (which cuts a sliding 84-day window), these
+    buckets are fixed to the season, so a week's value is final the moment
+    that week completes and never drifts as later weeks arrive.
+
+    Behaviour during replay:
+    - Future week (not started)        -> null (no bar drawn yet)
+    - In-progress week (partial days)  -> running aggregate of days seen so
+      far, so the bar grows/shrinks live as the week accumulates
+    - Completed week (all 7 days done) -> fixed full aggregate (never moves)
+    """
+    t = {"PRECTOTCORR": [], "T2M": [], "RH2M": [], "GWETROOT": []}
+    for w in range(12):
+        s = start_idx + w * 7
+        e = start_idx + (w + 1) * 7
+        last_day = e - 1
+        if s > current_idx:
+            # Future week, not started yet.
+            t["PRECTOTCORR"].append(None)
+            t["T2M"].append(None)
+            t["RH2M"].append(None)
+            t["GWETROOT"].append(None)
+            continue
+        if last_day > current_idx:
+            # In-progress week: aggregate only the days seen so far.
+            chunk = daily_data[s:current_idx + 1]
+        else:
+            # Completed week: aggregate all 7 days (fixed).
+            chunk = daily_data[s:e]
+        if not chunk:
+            t["PRECTOTCORR"].append(None)
+            t["T2M"].append(None)
+            t["RH2M"].append(None)
+            t["GWETROOT"].append(None)
+            continue
+        prec = sum(float(r["PRECTOTCORR"]) for r in chunk)
+        t2m = sum(float(r["T2M"]) for r in chunk) / len(chunk)
+        rh = sum(float(r["RH2M"]) for r in chunk) / len(chunk)
+        gw = sum(float(r["GWETROOT"]) for r in chunk) / len(chunk)
+        t["PRECTOTCORR"].append(round(prec, 2))
+        t["T2M"].append(round(t2m, 2))
+        t["RH2M"].append(round(rh, 2))
+        t["GWETROOT"].append(round(gw, 4))
+    return t
+
+def virtual_sensor_worker(session_id: str, district: str, year: int, season: str, speed: float):
+    global stream_sessions
+    session = stream_sessions.get(session_id)
+    if not session:
+        return
+
+    daily_data = _load_daily_data(district, year, season)
+    start_str = f"{year}{SEASON_START.get(season, '0615')}"
+    # Bound the replay to the fixed season window (e.g. Kharif Jun15-Sep6,
+    # Rabi Nov1-Jan23), not the entire 1981-2026 CSV. Otherwise `total` spans
+    # hundreds of post-season days and the progress counter is meaningless.
+    _, end_str = get_season_dates(year, season)
+    start_idx = end_idx = None
+    for i, d in enumerate(daily_data):
+        if d["date"] == start_str:
+            start_idx = i
+        if d["date"] == end_str:
+            end_idx = i
+        if start_idx is not None and end_idx is not None:
+            break
+
+    if start_idx is None:
+        start_idx = 0
+    if end_idx is None:
+        # Synthetic fallback / missing end date: clamp to ~12 weeks.
+        end_idx = min(start_idx + 83, len(daily_data) - 1)
+
+    buf = _prefill_buffer(daily_data, start_idx)
+    session["total"] = end_idx - start_idx + 1
+    session["progress"] = 0
+
+    for i in range(start_idx, end_idx + 1):
+        sess = stream_sessions.get(session_id)
+        if not sess or sess.get("status") == "stopped":
+            break
+        while sess.get("status") == "paused":
+            time.sleep(0.5)
+            sess = stream_sessions.get(session_id)
+            if not sess or sess["status"] == "stopped":
+                return
+
+        d = daily_data[i]
+        buf.append([float(d["PRECTOTCORR"]), float(d["T2M"]), float(d["RH2M"]), float(d["GWETROOT"])])
+        # Rolling 84-day window feeds the model (trained-feature consistency).
+        model_telemetry = _buffer_to_weekly(buf)
+        # Season-anchored weeks feed the UI so each week's value is fixed once complete.
+        display_telemetry = _season_weekly(daily_data, start_idx, i)
+        result = run_orchestrator(district, season, year, model_telemetry, "full_diagnosis")
+
+        sess["current_date"] = d["date"]
+        sess["progress"] = i - start_idx + 1
+
         out_msg = json.dumps({
             "type": "REAL_TIME_UPDATE",
-            "date": payload.get("date"),
+            "date": d["date"],
             "district": district,
-            "telemetry": telemetry,
-            "prediction": result
+            "season": season,
+            "year": year,
+            "telemetry": display_telemetry,
+            "prediction": result,
         })
-        
-        # Schedule the async broadcast from this synchronous MQTT thread
         if main_loop is not None:
             asyncio.run_coroutine_threadsafe(manager.broadcast(out_msg), main_loop)
-            print(f"Broadcasted live update for {district} - {payload.get('date')}")
-            
-    except Exception as e:
-        print(f"Error processing MQTT: {e}")
 
-# Start MQTT Client
-try:
-    mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1) if hasattr(mqtt, 'CallbackAPIVersion') else mqtt.Client()
-    mqtt_client.on_message = on_mqtt_message
-    mqtt_client.connect("broker.emqx.io", 1883, 60)
-    mqtt_client.subscribe("odisha_cdt/telemetry/#")
-    mqtt_client.loop_start()
-except Exception as e:
-    print(f"Warning: Could not start MQTT client: {e}")
+        actual_speed = stream_sessions.get(session_id, {}).get("speed", speed)
+        time.sleep(actual_speed)
+
+    if session_id in stream_sessions:
+        stream_sessions[session_id]["status"] = "stopped"
+
+    complete_msg = json.dumps({
+        "type": "REPLAY_COMPLETE",
+        "session_id": session_id,
+        "district": district,
+        "season": season,
+        "year": year,
+    })
+    if main_loop is not None:
+        asyncio.run_coroutine_threadsafe(manager.broadcast(complete_msg), main_loop)
+
+class StreamStartRequest(BaseModel):
+    district: str = "Ganjam"
+    year: int = 2024
+    season: str = "Kharif"
+    speed: float = 1.5
+
+    @field_validator("speed")
+    @classmethod
+    def speed_positive(cls, v):
+        if v <= 0:
+            raise ValueError("speed must be positive")
+        return v
+
+class StreamSessionRequest(BaseModel):
+    session_id: str
+
+class StreamSpeedRequest(BaseModel):
+    session_id: str
+    speed: float = 1.5
+
+@app.post("/api/stream/start")
+def start_stream(request: StreamStartRequest):
+    global _session_counter, stream_sessions
+    district = request.district
+    year = request.year
+    season = request.season
+    speed = request.speed
+
+    _session_counter += 1
+    session_id = f"stream_{_session_counter}_{int(time.time())}"
+    stream_sessions[session_id] = {
+        "status": "playing", "district": district, "year": year,
+        "season": season, "speed": speed, "progress": 0, "total": 0,
+        "current_date": None, "created_at": time.time(),
+    }
+
+    t = threading.Thread(target=virtual_sensor_worker,
+                         args=(session_id, district, year, season, speed), daemon=True)
+    t.start()
+    stream_sessions[session_id]["thread"] = t
+    return {"session_id": session_id, "status": "playing"}
+
+@app.post("/api/stream/stop")
+def stop_stream(request: StreamSessionRequest):
+    session_id = request.session_id
+    if session_id and session_id in stream_sessions:
+        stream_sessions[session_id]["status"] = "stopped"
+        return {"status": "stopped", "session_id": session_id}
+    for sid in list(stream_sessions.keys()):
+        stream_sessions[sid]["status"] = "stopped"
+    return {"status": "stopped", "sessions_stopped": len(stream_sessions)}
+
+@app.post("/api/stream/pause")
+def pause_stream(request: StreamSessionRequest):
+    session_id = request.session_id
+    if session_id in stream_sessions:
+        stream_sessions[session_id]["status"] = "paused"
+        return {"status": "paused"}
+    return {"error": "Session not found"}
+
+@app.post("/api/stream/resume")
+def resume_stream(request: StreamSessionRequest):
+    session_id = request.session_id
+    if session_id in stream_sessions:
+        stream_sessions[session_id]["status"] = "playing"
+        return {"status": "playing"}
+    return {"error": "Session not found"}
+
+@app.post("/api/stream/speed")
+def set_stream_speed(request: StreamSpeedRequest):
+    session_id = request.session_id
+    speed = request.speed
+    if session_id and session_id in stream_sessions:
+        stream_sessions[session_id]["speed"] = speed
+        return {"status": "ok", "speed": speed}
+    return {"error": "Session not found"}
+
+@app.get("/api/stream/status/{session_id}")
+def get_stream_status(session_id: str):
+    sess = stream_sessions.get(session_id)
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {
+        "session_id": session_id,
+        "status": sess["status"],
+        "district": sess["district"],
+        "year": sess["year"],
+        "season": sess["season"],
+        "speed": sess["speed"],
+        "current_date": sess["current_date"],
+        "progress": sess["progress"],
+        "total": sess["total"],
+    }
 
 @app.websocket("/ws/farm-stream")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
         while True:
-            await websocket.receive_text() # Keep connection alive
+            await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket)
-
-# --- Virtual Sensor Streamer Thread ---
-stream_state = "stopped"
-streaming_thread = None
-import threading
-import time
-import csv
-
-def virtual_sensor_worker(district: str, year: int):
-    global stream_state
-    pub_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1) if hasattr(mqtt, 'CallbackAPIVersion') else mqtt.Client()
-    try:
-        pub_client.connect("broker.emqx.io", 1883, 60)
-    except Exception as e:
-        print(f"Failed to connect publisher: {e}")
-        return
-
-    csv_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "sources", "data", "telemetry", f"{district.lower()}_daily.csv")
-    if not os.path.exists(csv_path):
-        print(f"Telemetry CSV not found: {csv_path}")
-        stream_state = "stopped"
-        return
-
-    start_date = f"{year}0615"
-    with open(csv_path, 'r') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            if row['Date'] == start_date:
-                break
-        
-        for row in reader:
-            while stream_state == "paused":
-                time.sleep(0.5)
-            if stream_state == "stopped":
-                break
-            payload = {
-                "district": district,
-                "date": row["Date"],
-                "PRECTOTCORR": float(row["PRECTOTCORR"]),
-                "T2M": float(row["T2M"]),
-                "RH2M": float(row["RH2M"]),
-                "GWETROOT": float(row["GWETROOT"])
-            }
-            pub_client.publish(f"odisha_cdt/telemetry/{district.lower()}", json.dumps(payload))
-            print(f"[STREAM] Sent {district} day {row['Date']}")
-            time.sleep(1.5)
-    stream_state = "stopped"
-
-@app.post("/api/stream/toggle")
-def toggle_stream(request: dict):
-    global stream_state, streaming_thread
-    district = request.get("district", "Ganjam")
-    year = request.get("year", 2024)
-    action = request.get("action", "start")
-    
-    if action == "start":
-        if stream_state == "paused":
-            stream_state = "playing"
-        elif stream_state == "stopped":
-            stream_state = "playing"
-            streaming_thread = threading.Thread(target=virtual_sensor_worker, args=(district, year), daemon=True)
-            streaming_thread.start()
-    elif action == "pause":
-        if stream_state == "playing":
-            stream_state = "paused"
-    elif action == "stop":
-        stream_state = "stopped"
-        
-    return {"status": stream_state}
 
 
 if __name__ == "__main__":

@@ -27,6 +27,8 @@ def _get_client() -> Groq:
     global _client
     if _client is None:
         key = os.environ.get("GROQ_API_KEY", "").strip().strip("\"'")
+        if not key:
+            print("WARNING: GROQ_API_KEY not set — LLM features will be disabled (keyword fallback only)")
         _client = Groq(api_key=key)
     return _client
 
@@ -54,6 +56,40 @@ def _call(system: str, user: str, temperature: float = 0.1, max_tokens: int = 51
             break
     return ""
 
+def _translate_attention_to_weeks(attention_weights):
+    if not attention_weights:
+        return ""
+    aw = attention_weights
+    if len(aw) == 84:
+        weeks = {}
+        for d, val in enumerate(aw):
+            wk = d // 7
+            weeks[wk] = weeks.get(wk, 0) + val
+        ranked = sorted(weeks.items(), key=lambda x: x[1], reverse=True)
+        top = [f"W{w+1}" for w, _ in ranked[:4]]
+        return f"The model focused most on {' → '.join(top)}, suggesting these growth stages are critical."
+    return ""
+
+def _telemetry_summary(telemetry):
+    if not telemetry:
+        return ""
+    parts = []
+    if "T2M" in telemetry:
+        t = telemetry["T2M"]
+        parts.append(f"Temperature: {t[0]:.1f}°C (early) → {max(t):.1f}°C (peak) → {t[-1]:.1f}°C (late)")
+    if "PRECTOTCORR" in telemetry:
+        p = telemetry["PRECTOTCORR"]
+        total = sum(p)
+        wet_weeks = sum(1 for v in p if v > 50)
+        parts.append(f"Total rainfall: {total:.0f}mm over the season")
+        if wet_weeks:
+            parts.append(f"{wet_weeks} heavy-rain weeks (exceeding 50mm)")
+    if "RH2M" in telemetry:
+        h = telemetry["RH2M"]
+        avg_h = sum(h) / len(h)
+        parts.append(f"Average humidity: {avg_h:.0f}%")
+    return " | ".join(parts)
+
 def parse_intent(user_text: str) -> dict:
     """Parse user query into structured routing parameters."""
     system = f"""You are a query parser for a crop advisory system. Extract structured fields from the user's query.
@@ -68,28 +104,34 @@ Valid query_type values (choose EXACTLY one):
 - "full_diagnosis" — comprehensive analysis or unclear intent
 
 Respond ONLY with valid JSON (no markdown, no extra text, no explanation):
-{{"district": "DistrictName" or null, "season": "Kharif" or "Rabi" or null, "year": 2024 or null, "query_type": "failure_risk"}}
-Use null for any field not mentioned. If the query mentions a year, use it; otherwise null."""
+{{"district": "DistrictName" or null, "season": "Kharif" or "Rabi" or null, "year": [year number] or null, "query_type": "failure_risk"}}
+If the query mentions a specific year, use that year number directly. Otherwise null."""
 
-    # Also do simple keyword matching as fallback
     raw = _call(system, user_text, temperature=0.1, max_tokens=256)
-    try:
-        parsed = json.loads(raw)
-    except (json.JSONDecodeError, KeyError):
-        m = re.search(r'\{.*\}', raw, re.DOTALL)
-        if m:
-            try:
-                parsed = json.loads(m.group())
-            except json.JSONDecodeError:
-                parsed = {"district": None, "season": None, "year": None, "query_type": "full_diagnosis"}
-        else:
-            parsed = {"district": None, "season": None, "year": None, "query_type": "full_diagnosis"}
 
+    # Parse JSON from LLM response
+    parsed = None
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, KeyError):
+            m = re.search(r'\{.*\}', raw, re.DOTALL)
+            if m:
+                try:
+                    parsed = json.loads(m.group())
+                except json.JSONDecodeError:
+                    pass
+
+    if not parsed:
+        parsed = {"district": None, "season": None, "year": None, "query_type": "full_diagnosis"}
+
+    # Normalize district name
     if parsed.get("district"):
         matches = [d for d in DISTRICTS if d.lower() == parsed["district"].lower()]
         parsed["district"] = matches[0] if matches else None
+
+    # Ensure valid query_type
     if parsed.get("query_type") not in QUERY_TYPES:
-        # Keyword fallback
         text_lower = user_text.lower()
         if any(w in text_lower for w in ["flood", "drought", "fail", "risk", "stress", "danger"]):
             parsed["query_type"] = "failure_risk"
@@ -103,8 +145,14 @@ Use null for any field not mentioned. If the query mentions a year, use it; othe
             parsed["query_type"] = "full_diagnosis"
     return parsed
 
-def format_advisory(structured: dict) -> str:
-    """Format structured model output into plain-language advisory."""
+def format_advisory(structured: dict, attention_weights: list = None, telemetry: dict = None) -> str:
+    """Format structured model output into plain-language advisory.
+    
+    Args:
+        structured: Prediction result dict with district/season/year/yield/probability/triggers
+        attention_weights: LSTM attention weights (84 daily values) for temporal context
+        telemetry: Weekly telemetry dict with T2M/PRECTOTCORR/RH2M/GWETROOT lists
+    """
     lines = []
     if structured.get("district") and structured.get("season") and structured.get("year"):
         lines.append(f"District: {structured['district']}, Season: {structured['season']}, Year: {structured['year']}")
@@ -114,8 +162,16 @@ def format_advisory(structured: dict) -> str:
         lines.append(f"Failure Risk: {structured['failure_probability']:.0%}")
     if structured.get("active_triggers"):
         lines.append(f"Active Triggers: {', '.join(structured['active_triggers'])}")
-    if structured.get("yield_source"):
-        lines.append(f"Yield Source: {structured['yield_source']}")
+
+    # Add temporal attention context
+    attn_text = _translate_attention_to_weeks(attention_weights)
+    if attn_text:
+        lines.append(f"Temporal Focus: {attn_text}")
+
+    # Add telemetry context
+    telemetry_text = _telemetry_summary(telemetry)
+    if telemetry_text:
+        lines.append(f"Weather Summary: {telemetry_text}")
 
     prompt = "\n".join(lines) if lines else json.dumps(structured, indent=2)
 
@@ -124,11 +180,34 @@ def format_advisory(structured: dict) -> str:
 Rules:
 - Use plain English, no technical jargon
 - Mention the specific district, season, and year
-- If triggers are present (Drought, Flooding, Thermal Sterility, Pest Risk), explain when and why
+- If triggers are present (Drought, Flooding, Thermal Sterility, Pest Risk), explain when and why, grounding it in the actual weather data provided
+- Reference the temporal focus if given (e.g., "The model suggests the reproductive phase in Weeks 7-9 is most critical")
 - Suggest 1 practical action if risk is high
 - Keep it under 4 sentences total
 - Do NOT mention model names, probabilities, or technical metrics
 
 Output only the advisory text, no preamble."""
 
-    return _call(system, prompt, temperature=0.3, max_tokens=512)
+    advisory = _call(system, prompt, temperature=0.3, max_tokens=512)
+
+    # Fallback if Groq is unavailable
+    if not advisory:
+        fallback = []
+        d = structured.get("district", "the district")
+        s = structured.get("season", "season")
+        y = structured.get("year", "")
+        yld = structured.get("predicted_yield")
+        fail = structured.get("failure_probability", 0)
+        triggers = structured.get("active_triggers", [])
+
+        if yld is not None:
+            fallback.append(f"In {d} for {s} {y}, the predicted yield is {yld} Q/Acre.")
+        if triggers:
+            fallback.append(f"Alerts: {', '.join(triggers)}. {'Consider taking preventive action.' if fail and fail > 0.5 else 'Monitor conditions closely.'}")
+        elif fail and fail > 0.5:
+            fallback.append(f"Risk of crop failure is elevated for {d}. Consider reviewing irrigation and pest management.")
+        else:
+            fallback.append(f"Conditions look favorable for {d} {s} {y}. Continue standard management practices.")
+        advisory = " ".join(fallback)
+
+    return advisory

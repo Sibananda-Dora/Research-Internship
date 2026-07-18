@@ -22,10 +22,12 @@ export default function DSSChat({ district, year, season, onRunSimulation }) {
   const [loading, setLoading] = useState(false);
   const chatEndRef = useRef(null);
 
-  // Auto-scroll to bottom of chat
+  // Auto-scroll to bottom of chat (skip on initial mount with just the welcome message)
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, loading]);
+    if (messages.length > 1) {
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages.length]);
 
   const handleSendMessage = async (textToSend) => {
     const text = textToSend || input;
@@ -82,7 +84,7 @@ export default function DSSChat({ district, year, season, onRunSimulation }) {
   return (
     <div className="glass-card chat-card">
       <div className="card-header" style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', marginBottom: '8px' }}>
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px' }} className="text-cyan">
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px' }} className="text-accent">
           <MessageSquare size={18} />
           Cognitive Advisory Node
         </h2>
@@ -91,7 +93,7 @@ export default function DSSChat({ district, year, season, onRunSimulation }) {
       <div className="chat-messages">
         {messages.map((m) => (
           <div key={m.id} className={`chat-message ${m.sender}`}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px', fontSize: '0.75rem', fontWeight: 600, color: m.sender === 'user' ? '#000' : 'var(--accent-cyan)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px', fontSize: '0.75rem', fontWeight: 600, color: m.sender === 'user' ? 'var(--on-accent)' : 'var(--accent)' }}>
               {m.sender === 'user' ? <User size={12} /> : <Cpu size={12} />}
               {m.sender === 'user' ? 'User' : 'CDT Advisor'}
             </div>
@@ -124,7 +126,7 @@ export default function DSSChat({ district, year, season, onRunSimulation }) {
                   transition: 'all 0.2s'
                 }}
                 onMouseOver={(e) => {
-                  e.currentTarget.style.borderColor = 'var(--accent-cyan)';
+                  e.currentTarget.style.borderColor = 'var(--accent)';
                   e.currentTarget.style.color = '#fff';
                 }}
                 onMouseOut={(e) => {

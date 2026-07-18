@@ -32,7 +32,7 @@ export default function Timeline({
   return (
     <div className="glass-card timeline-card">
       <div className="card-header" style={{ marginBottom: '8px' }}>
-        <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px' }} className="text-cyan">
+        <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px' }} className="text-accent">
           <Calendar size={18} />
           12-Week Vegetative Timeline (Active: Week {selectedWeek})
         </h2>
@@ -50,25 +50,25 @@ export default function Timeline({
               <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorPrecip" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.4}/>
-                    <stop offset="95%" stopColor="#06b6d4" stopOpacity={0.0}/>
+                    <stop offset="5%" stopColor="var(--chart-1)" stopOpacity={0.4}/>
+                    <stop offset="95%" stopColor="var(--chart-1)" stopOpacity={0.0}/>
                   </linearGradient>
                   <linearGradient id="colorWetness" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.4}/>
-                    <stop offset="95%" stopColor="#10b981" stopOpacity={0.0}/>
+                    <stop offset="5%" stopColor="var(--chart-3)" stopOpacity={0.4}/>
+                    <stop offset="95%" stopColor="var(--chart-3)" stopOpacity={0.0}/>
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                 <XAxis dataKey="name" stroke="var(--text-muted)" fontSize={10} />
-                <YAxis yAxisId="left" stroke="#06b6d4" fontSize={10} />
-                <YAxis yAxisId="right" orientation="right" stroke="#10b981" fontSize={10} />
+                <YAxis yAxisId="left" stroke="var(--chart-1)" fontSize={10} />
+                <YAxis yAxisId="right" orientation="right" stroke="var(--chart-3)" fontSize={10} />
                 <Tooltip 
-                  contentStyle={{ background: '#111318', borderColor: 'var(--border-color)', color: '#fff' }}
+                  contentStyle={{ background: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
                   itemStyle={{ fontSize: '0.8rem' }}
                 />
                 <ReferenceLine x={`W${selectedWeek}`} stroke="rgba(255,255,255,0.4)" strokeDasharray="3 3" yAxisId="left" />
-                <Area yAxisId="left" type="monotone" dataKey="precipitation" stroke="#06b6d4" fillOpacity={1} fill="url(#colorPrecip)" name="Rain (mm)" />
-                <Area yAxisId="right" type="monotone" dataKey="soilWetness" stroke="#10b981" fillOpacity={1} fill="url(#colorWetness)" name="Soil Wetness (%)" />
+                <Area yAxisId="left" type="monotone" dataKey="precipitation" stroke="var(--chart-1)" fillOpacity={1} fill="url(#colorPrecip)" name="Rain (mm)" />
+                <Area yAxisId="right" type="monotone" dataKey="soilWetness" stroke="var(--chart-3)" fillOpacity={1} fill="url(#colorWetness)" name="Soil Wetness (%)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -84,25 +84,25 @@ export default function Timeline({
               <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorTemp" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.4}/>
-                    <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.0}/>
+                    <stop offset="5%" stopColor="var(--chart-2)" stopOpacity={0.4}/>
+                    <stop offset="95%" stopColor="var(--chart-2)" stopOpacity={0.0}/>
                   </linearGradient>
                   <linearGradient id="colorHum" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.4}/>
-                    <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0.0}/>
+                    <stop offset="5%" stopColor="var(--chart-5)" stopOpacity={0.4}/>
+                    <stop offset="95%" stopColor="var(--chart-5)" stopOpacity={0.0}/>
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                 <XAxis dataKey="name" stroke="var(--text-muted)" fontSize={10} />
-                <YAxis yAxisId="left" stroke="#f59e0b" fontSize={10} />
-                <YAxis yAxisId="right" orientation="right" stroke="#8b5cf6" fontSize={10} />
+                <YAxis yAxisId="left" stroke="var(--chart-2)" fontSize={10} />
+                <YAxis yAxisId="right" orientation="right" stroke="var(--chart-5)" fontSize={10} />
                 <Tooltip 
-                  contentStyle={{ background: '#111318', borderColor: 'var(--border-color)', color: '#fff' }}
+                  contentStyle={{ background: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
                   itemStyle={{ fontSize: '0.8rem' }}
                 />
                 <ReferenceLine x={`W${selectedWeek}`} stroke="rgba(255,255,255,0.4)" strokeDasharray="3 3" yAxisId="left" />
-                <Area yAxisId="left" type="monotone" dataKey="temperature" stroke="#f59e0b" fillOpacity={1} fill="url(#colorTemp)" name="Temp (°C)" />
-                <Area yAxisId="right" type="monotone" dataKey="humidity" stroke="#8b5cf6" fillOpacity={1} fill="url(#colorHum)" name="Humidity (%)" />
+                <Area yAxisId="left" type="monotone" dataKey="temperature" stroke="var(--chart-2)" fillOpacity={1} fill="url(#colorTemp)" name="Temp (°C)" />
+                <Area yAxisId="right" type="monotone" dataKey="humidity" stroke="var(--chart-5)" fillOpacity={1} fill="url(#colorHum)" name="Humidity (%)" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -111,7 +111,7 @@ export default function Timeline({
 
       {/* Week Slider controls */}
       <div className="slider-container">
-        <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--accent-cyan)' }}>W1</span>
+        <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--accent)' }}>W1</span>
         <div className="slider-track-wrap">
           <input 
             type="range" 
@@ -122,7 +122,7 @@ export default function Timeline({
             onChange={(e) => onSelectWeek(parseInt(e.target.value))}
           />
         </div>
-        <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--accent-cyan)' }}>W12</span>
+        <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--accent)' }}>W12</span>
       </div>
     </div>
   );

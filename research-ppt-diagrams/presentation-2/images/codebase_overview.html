@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap');
+  
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  
+  body {
+    background: #f1f5f9;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-family: 'JetBrains Mono', monospace;
+    padding: 40px;
+  }
+
+  .card {
+    background: #ffffff;
+    border: 2px solid #cbd5e1;
+    border-radius: 16px;
+    padding: 32px 36px;
+    max-width: 820px;
+    width: 100%;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+  }
+
+  .title {
+    font-size: 20px;
+    font-weight: 700;
+    color: #4f46e5;
+    letter-spacing: 1px;
+    margin-bottom: 18px;
+    padding-bottom: 12px;
+    border-bottom: 2px solid #e2e8f0;
+  }
+
+  .section {
+    margin-bottom: 18px;
+  }
+
+  .section:last-child { margin-bottom: 0; }
+
+  .folder {
+    color: #0f172a;
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+
+  .folder span {
+    color: #64748b;
+    font-weight: 400;
+    font-size: 12px;
+    margin-left: 8px;
+  }
+
+  .files {
+    padding-left: 22px;
+    border-left: 3px solid #6366f1;
+    margin-left: 8px;
+  }
+
+  .file {
+    font-size: 13px;
+    color: #475569;
+    line-height: 2;
+    display: flex;
+    align-items: baseline;
+  }
+
+  .file .bullet {
+    color: #6366f1;
+    font-weight: 700;
+    width: 18px;
+    flex-shrink: 0;
+  }
+
+  .file .name {
+    color: #1e293b;
+    font-weight: 600;
+    min-width: 240px;
+    flex-shrink: 0;
+  }
+
+  .file .desc {
+    color: #334155;
+    font-size: 13px;
+    font-weight: 500;
+    margin-left: 6px;
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="title">📁  Codebase Overview</div>
+
+    <div class="section">
+      <div class="folder">frontend/ <span>React 19 + Vite 8</span></div>
+      <div class="files">
+        <div class="file"><span class="bullet">▸</span><span class="name">App.jsx</span><span class="desc">Main app, 11 lazy components</span></div>
+        <div class="file"><span class="bullet">▸</span><span class="name">components/</span><span class="desc">GIS map, DSSChat, FeedbackLoop, LiveTwin, dashboards</span></div>
+        <div class="file"><span class="bullet">▸</span><span class="name">index.css</span><span class="desc">Dark glassmorphism theme (~900 lines)</span></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="folder">backend/ <span>FastAPI + WebSocket</span></div>
+      <div class="files">
+        <div class="file"><span class="bullet">▸</span><span class="name">main.py</span><span class="desc">13+ REST endpoints + WS manager + streaming worker</span></div>
+        <div class="file"><span class="bullet">▸</span><span class="name">llm_client.py</span><span class="desc">Groq llama-3.3-70b integration</span></div>
+        <div class="file"><span class="bullet">▸</span><span class="name">requirements.txt</span><span class="desc">FastAPI, Uvicorn, Groq, XGBoost, PyTorch</span></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="folder">code/phase-2-training/ <span>Core ML Pipeline</span></div>
+      <div class="files">
+        <div class="file"><span class="bullet">▸</span><span class="name">prepare_data.py</span><span class="desc">Data harmonization + feature engineering</span></div>
+        <div class="file"><span class="bullet">▸</span><span class="name">train.py</span><span class="desc">LSTM, XGBoost, Stacking training</span></div>
+        <div class="file"><span class="bullet">▸</span><span class="name">predict.py</span><span class="desc">Inference + MC Dropout + triggers</span></div>
+        <div class="file"><span class="bullet">▸</span><span class="name">orchestrator.py</span><span class="desc">DAG router (5 query types → 5 model nodes)</span></div>
+        <div class="file"><span class="bullet">▸</span><span class="name">update_pipeline.py</span><span class="desc">Full retraining pipeline</span></div>
+        <div class="file"><span class="bullet">▸</span><span class="name">models/lstm_final.pth</span><span class="desc">LSTM-Attention (56K params)</span></div>
+        <div class="file"><span class="bullet">▸</span><span class="name">models/xgb_regressor.json</span><span class="desc">XGBoost yield regressor (23 features)</span></div>
+        <div class="file"><span class="bullet">▸</span><span class="name">models/xgb_classifier.json</span><span class="desc">XGBoost failure classifier</span></div>
+        <div class="file"><span class="bullet">▸</span><span class="name">models/meta_yield.pkl</span><span class="desc">Ridge stacking meta-learner (yield)</span></div>
+        <div class="file"><span class="bullet">▸</span><span class="name">models/meta_fail.pkl</span><span class="desc">Ridge stacking meta-learner (failure)</span></div>
+
+        <div class="file"><span class="bullet">▸</span><span class="name">version.json</span><span class="desc">Model version + last-run metrics</span></div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

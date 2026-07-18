@@ -2,6 +2,7 @@ import numpy as np
 import os, warnings
 warnings.filterwarnings('ignore')
 
+import pandas as pd
 import xgboost as xgb
 import torch
 import torch.nn as nn
@@ -12,6 +13,7 @@ from pathlib import Path
 BASE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 MODEL_DIR = os.path.join(os.path.dirname(__file__), 'models')
 DATA_DIR = os.path.join(os.path.dirname(__file__), 'prepared_data')
+TELEMETRY_DIR = os.path.join(BASE, "sources", "data", "telemetry")
 
 device = torch.device('cpu')
 VAR_NAMES = ['PRECTOTCORR', 'T2M', 'RH2M', 'GWETROOT']
@@ -53,44 +55,96 @@ class LSTMAttention(nn.Module):
 
 
 # ---------- Biophysical triggers ----------
-def get_biophysical_triggers(weather_12x4):
-    triggers = []
-    precip = weather_12x4.get('PRECTOTCORR', [0]*12)
-    temp = weather_12x4.get('T2M', [20]*12)
-    rh = weather_12x4.get('RH2M', [70]*12)
-    wetness = weather_12x4.get('GWETROOT', [0.5]*12)
+def get_trigger_details(weather_12x4):
+    """Structured diagnostics for all four biophysical triggers.
 
-    for w in range(1, 6):
-        if w < len(precip) and precip[w] > 250:
-            triggers.append('Submergence Flooding')
-            break
+    Each entry: id, label, active, severity, current_value, threshold, unit,
+    progress, description. `progress` is 0..1+ (fraction of the threshold /
+    required consecutive-run met); >1 means the threshold is exceeded.
+    """
+    precip = weather_12x4.get('PRECTOTCORR', [0.0] * 12)
+    temp = weather_12x4.get('T2M', [20.0] * 12)
+    rh = weather_12x4.get('RH2M', [70.0] * 12)
+    wetness = weather_12x4.get('GWETROOT', [0.5] * 12)
 
-    c = 0
+    details = []
+
+    # Submergence Flooding — peak rainfall in early vegetative weeks (W1-5)
+    peak_precip = max((precip[w] for w in range(1, 6) if w < len(precip)), default=0.0)
+    details.append({
+        'id': 'flooding',
+        'label': 'Submergence Flooding',
+        'active': peak_precip > 250,
+        'severity': 'warning',
+        'current_value': round(peak_precip, 1),
+        'threshold': 250,
+        'unit': 'mm',
+        'progress': round(min(peak_precip / 250.0, 1.5), 3),
+        'description': 'Heavy rainfall in early vegetative phase (W1-5) risks waterlogging.',
+    })
+
+    # Drought Stress — >=3 consecutive weeks of low root-zone wetness in W3-8
+    drought_run = 0
+    drought_max = 0
     for w in range(3, 8):
         if w < len(wetness) and wetness[w] < 0.35:
-            c += 1
-            if c >= 3:
-                triggers.append('Drought Stress')
-                break
+            drought_run += 1
+            drought_max = max(drought_max, drought_run)
         else:
-            c = 0
+            drought_run = 0
+    details.append({
+        'id': 'drought',
+        'label': 'Drought Stress',
+        'active': drought_max >= 3,
+        'severity': 'critical',
+        'current_value': drought_max,
+        'threshold': 3,
+        'unit': 'wks',
+        'progress': round(min(drought_max / 3.0, 1.5), 3),
+        'description': '3+ consecutive weeks of low soil moisture in reproductive window (W3-8).',
+    })
 
-    for w in range(7, 10):
-        if w < len(temp) and temp[w] > 34:
-            triggers.append('Thermal Sterility')
-            break
+    # Thermal Sterility — peak temperature in reproductive phase (W7-9)
+    peak_temp = max((temp[w] for w in range(7, 10) if w < len(temp)), default=0.0)
+    details.append({
+        'id': 'thermal',
+        'label': 'Thermal Sterility',
+        'active': peak_temp > 34,
+        'severity': 'critical',
+        'current_value': round(peak_temp, 1),
+        'threshold': 34,
+        'unit': '°C',
+        'progress': round(min(peak_temp / 34.0, 1.5), 3),
+        'description': 'Spike >34°C during flowering (W7-9) causes pollen sterility.',
+    })
 
-    c = 0
+    # Pest/Pathogen Risk — >=2 consecutive warm-humid weeks
+    pest_run = 0
+    pest_max = 0
     for w in range(12):
         if w < len(rh) and w < len(temp) and rh[w] > 85 and 25 <= temp[w] <= 30:
-            c += 1
-            if c >= 2:
-                triggers.append('Pest/Pathogen Risk')
-                break
+            pest_run += 1
+            pest_max = max(pest_max, pest_run)
         else:
-            c = 0
+            pest_run = 0
+    details.append({
+        'id': 'pest',
+        'label': 'Pest/Pathogen Risk',
+        'active': pest_max >= 2,
+        'severity': 'warning',
+        'current_value': pest_max,
+        'threshold': 2,
+        'unit': 'wks',
+        'progress': round(min(pest_max / 2.0, 1.5), 3),
+        'description': 'Warm, humid conditions (RH>85%, 25-30°C) over 2+ weeks favor disease.',
+    })
 
-    return triggers
+    return details
+
+
+def get_biophysical_triggers(weather_12x4):
+    """Backward-compatible: return list of active trigger label strings."""
+    return [d['label'] for d in get_trigger_details(weather_12x4) if d['active']]
 
 
 # ---------- Feature engineering ----------
@@ -98,11 +152,36 @@ def weekly_to_daily(weekly_12x4):
     """Upsample 12 weekly values to 84 daily by repeating each week 7 times."""
     return np.repeat(weekly_12x4, 7, axis=0)[:84]  # (84, 4)
 
+def _load_daily_seq(district, year, season):
+    """Load 84-day daily telemetry from CSV, matching prepare_data.py."""
+    fpath = os.path.join(TELEMETRY_DIR, f"{district.lower()}_daily.csv")
+    if not os.path.exists(fpath):
+        return None
+    try:
+        df_tel = pd.read_csv(fpath)
+        df_tel["Date_dt"] = pd.to_datetime(df_tel["Date"].astype(str), format="%Y%m%d")
+        df_tel = df_tel.sort_values("Date_dt").reset_index(drop=True)
+        if season.lower() == "kharif":
+            start_dt = pd.Timestamp(year=year, month=6, day=15)
+        else:
+            start_dt = pd.Timestamp(year=year, month=11, day=1)
+        mask = (df_tel["Date_dt"] >= start_dt) & (df_tel["Date_dt"] < start_dt + pd.Timedelta(days=84))
+        window = df_tel[mask]
+        if len(window) < 84:
+            return None
+        return window[["PRECTOTCORR", "T2M", "RH2M", "GWETROOT"]].values[:84].astype(np.float32)
+    except Exception:
+        return None
+
 def engineer_features(weather_flat_48, district, season, year, district_enc, season_enc, season_ohe):
     w = weather_flat_48.reshape(12, 4)
 
-    # Daily sequence for LSTM (upsample from weekly)
-    seq_daily = weekly_to_daily(w)
+    # Daily sequence for LSTM — load real daily telemetry when available
+    daily = _load_daily_seq(district, year, season)
+    if daily is not None:
+        seq_daily = daily
+    else:
+        seq_daily = weekly_to_daily(w)
 
     # Static features for LSTM (district index + season OHE + year)
     
@@ -237,7 +316,8 @@ class CDTPredictor:
         w_dict = {}
         for vi, vn in enumerate(VAR_NAMES):
             w_dict[vn] = [float(weather_flat_48[vi + 4 * w]) for w in range(12)]
-        triggers = get_biophysical_triggers(w_dict)
+        trigger_details = get_trigger_details(w_dict)
+        triggers = [d['label'] for d in trigger_details if d['active']]
 
         return {
             'predicted_yield': round(ensemble_yield, 2),
@@ -245,6 +325,7 @@ class CDTPredictor:
             'failure_anomaly': f_anomaly,
             'attention_weights': attn,
             'active_triggers': triggers,
+            'trigger_details': trigger_details,
             'xgb_yield': round(y_xgb, 2),
             'lstm_yield': round(y_lstm, 2),
             'monte_carlo_distribution': [],
@@ -325,17 +406,30 @@ if __name__ == '__main__':
     print('=== Predictor Test (84-step daily model) ===')
     predictor = CDTPredictor()
 
-    dummy_weather = np.random.rand(48).astype(np.float32)
-    r = predictor.predict(dummy_weather, 'Angul', 'Kharif', 2024)
+    print('\n--- Test 1: Angul Kharif 2024 (real daily CSV available) ---')
+    r = predictor.predict(np.random.rand(48).astype(np.float32), 'Angul', 'Kharif', 2024)
     print(f'XGBoost yield: {r["xgb_yield"]}, LSTM yield: {r["lstm_yield"]}')
     print(f'Ensemble: {r["predicted_yield"]} Q/Acre, fail={r["failure_probability"]:.2%}')
     print(f'Active triggers: {r["active_triggers"]}')
     aw = np.array(r['attention_weights'])
     print(f'Attention shape: {aw.shape}')
     top3_days = np.argsort(aw)[-3:][::-1]
-    print(f'Top-3 attention days: {top3_days} (weeks: {top3_days // 7 + 1})')
+    print(f'Top-3 attention days: {top3_days} — unique daily values expected (real CSV)')
 
-    mc = predictor.monte_carlo(dummy_weather, 'Angul', 'Kharif', 2024, n_samples=200)
-    print(f'\nMC: yield={mc["predicted_yield"]:.2f} +/- {mc["monte_carlo_std"]:.2f}')
+    print('\n--- Test 2: MC Dropout ---')
+    mc = predictor.monte_carlo(np.random.rand(48).astype(np.float32), 'Angul', 'Kharif', 2024, n_samples=200)
+    print(f'MC: yield={mc["predicted_yield"]:.2f} +/- {mc["monte_carlo_std"]:.2f}')
     print(f'MC 90% CI: [{mc["confidence_interval"]["lower"]:.2f}, {mc["confidence_interval"]["upper"]:.2f}]')
-    print('Done.')
+
+    print('\n--- Test 3: Verify daily vs weekly-upsampled input ---')
+    dummy = np.random.rand(48).astype(np.float32)
+    real_r = predictor.predict(dummy, 'Angul', 'Kharif', 2024)
+    _, static_in, _ = predictor._prepare(dummy, 'Angul', 'Kharif', 2024)
+    seq_scaled, _, _ = predictor._prepare(dummy, 'Angul', 'Kharif', 2024)
+    seq_84 = predictor.seq_scaler.inverse_transform(seq_scaled.reshape(-1, 4))
+    unique_counts = [len(np.unique(seq_84[w*7:(w+1)*7], axis=0)) for w in range(12)]
+    n_weeks_nonuniform = sum(1 for c in unique_counts if c > 1)
+    print(f'  Weeks with non-uniform daily values (real data): {n_weeks_nonuniform}/12 '
+          f'({"PASS" if n_weeks_nonuniform > 6 else "FAIL"}) — if all weeks are 1, input is upsampled not real')
+
+    print('\nDone.')

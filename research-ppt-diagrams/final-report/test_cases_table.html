@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  body {
+    font-family: 'Times New Roman', Times, serif;
+    padding: 20px;
+    background-color: white;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12pt;
+  }
+
+  th, td {
+    border: 1px solid black;
+    padding: 8px;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  th {
+    font-weight: bold;
+    background-color: #f2f2f2;
+  }
+
+  .code {
+    font-family: 'Courier New', Courier, monospace;
+  }
+</style>
+</head>
+<body>
+  
+  <table>
+    <thead>
+      <tr>
+        <th>Test ID</th>
+        <th>Test Description</th>
+        <th>Input Data</th>
+        <th>Expected Output</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>TC-01</td>
+        <td>Submit valid geographical coordinate for district resolution</td>
+        <td>Lat: 20.9, Lng: 86.3</td>
+        <td>Returns <span class="code">{"district": "Bhadrak"}</span></td>
+        <td>Pass</td>
+      </tr>
+      <tr>
+        <td>TC-02</td>
+        <td>Execute What-If Monte Carlo simulation</td>
+        <td>Climate sliders set to +2°C, -10% Rainfall</td>
+        <td>90% Confidence Interval generated in &lt; 2s</td>
+        <td>Pass</td>
+      </tr>
+      <tr>
+        <td>TC-03</td>
+        <td>Open-Meteo API temporary failure</td>
+        <td>Disconnect internet connection</td>
+        <td>System loads last known <span class="code">realtime_cache</span></td>
+        <td>Pass</td>
+      </tr>
+      <tr>
+        <td>TC-04</td>
+        <td>Query LLM with high failure risk</td>
+        <td><span class="code">y_fail = 1</span>, trigger = "Thermal Stress"</td>
+        <td>Chatbot outputs drought mitigation advisory</td>
+        <td>Pass</td>
+      </tr>
+    </tbody>
+  </table>
+
+</body>
+</html>

@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  body {
+    font-family: 'Times New Roman', Times, serif;
+    padding: 20px;
+    background-color: white;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12pt;
+  }
+
+  th, td {
+    border: 1px solid black;
+    padding: 8px;
+    text-align: center;
+    vertical-align: middle;
+  }
+
+  th {
+    font-weight: bold;
+    background-color: #f2f2f2;
+  }
+
+  .metric-col {
+    text-align: left;
+    font-weight: bold;
+  }
+
+  .winner {
+    font-weight: bold;
+  }
+</style>
+</head>
+<body>
+  
+  <table>
+    <thead>
+      <tr>
+        <th>Metric</th>
+        <th>Baseline (Naive-Mean)</th>
+        <th>LSTM (Deep Temporal)</th>
+        <th>XGBoost (Tabular)</th>
+        <th>Stacked Ensemble (Ridge)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="metric-col">Yield RMSE (Quintals/Acre)</td>
+        <td>6.75</td>
+        <td>4.05</td>
+        <td>3.81</td>
+        <td class="winner">3.63</td>
+      </tr>
+      <tr>
+        <td class="metric-col">Yield R²</td>
+        <td>-</td>
+        <td>0.641</td>
+        <td>0.682</td>
+        <td class="winner">0.712</td>
+      </tr>
+      <tr>
+        <td class="metric-col">Failure AUC</td>
+        <td>-</td>
+        <td>0.685</td>
+        <td>0.663</td>
+        <td class="winner">0.721</td>
+      </tr>
+    </tbody>
+  </table>
+
+</body>
+</html>

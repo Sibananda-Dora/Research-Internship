@@ -1,0 +1,91 @@
+﻿python.exe : Traceback (most recent call last):
+At line:1 char:1
++ & "C:\Users\Asus\AppData\Local\Programs\Python\Python313\python.exe"  ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "<string>", line 6, in <module>
+    print(page.extract_text())
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Asus\AppData\Local\Programs\Python\Python313\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u25cb' in position 820: character maps to <undefined>
+Resear ch Sensitization & Innovative Pr oject Development
+Faculty Mentors:-
+Dr. Niranjan Panigrahi Om Prakash Sahoo : 2401109207
+Tejeswar Mishal : 2401109256
+Soumya Ranjan Sahu : 2401109239
+Sibananda Dora : 2401109233
+Sambit Sekhar Biswal : 2521109014Dr. Sasmita Rani Behera Smart Agriculture: A Cognitive Digital Twin for Crop Yield and Failure Detection
+Members:-
+Currently, agricultural yield forecasting relies heavily on retrospective government statistics that lack real-time predictive
+capabilities. When climate-induced anomaliesùsuch as severe droughts, extreme thermal stress, or floodingùoccur,
+traditional regression models fail to accurately classify the probability of a crop failure in time for intervention. Furthermore,
+uninterpretable deep learning models provide predictions without actionable explanations, reducing trust among stakeholders.
+There is a critical need for an intelligent system that can continuously ingest environmental telemetry, model biophysical
+failure triggers, account for weather uncertainty, and provide explainable AI insights. A Cognitive Digital Twin (CDT) solves
+this by replicating the physical agricultural state digitally, allowing for proactive decision-making and counterfactual "What-If"
+climate simulations.DOMAIN & DESCRIPTION
+DOMAIN
+Agricultural Technology (AgriT ech) 
+ Artificial Intelligence
+Cognitive Digital Twin (CDT)
+ Core Focus : Building a continuous, data-driven feedback loop for proactive crop failure detection.
+PROBLEM DESCRIPTION
+PAPER -1 : Climate Prediction Using RNN LSTM to Estimate Agricultural Products Based on Koppen Classification (Andini & Utomo, 2021)
+1. Brief Description: This study focuses on predicting climate variables to optimize agricultural product estimation and mitigate the risk of  
+crop failure due to incompatible climate conditions.
+2.Dataset Used: A climate time-series dataset structured around the K÷ppen climate classification system.
+3.Proposed Methodology: The researchers implemented a Recurrent Neural Network (RNN) architecture utilizing Long Short-Term Memory
+(LSTM) cells (with 48 input neurons), optimized via the Adam optimizer over 200 epochs.
+4.Key Outcomes: The methodology successfully achieved high predictive accuracy, yielding a Mean Absolute Percentage Error (MAPE) of just
+3.29% for 1-month-ahead climate forecasting.
+5.Research Gaps: The model's temporal depth is limited to forecasting just one month ahead, rather than projecting a full 12-week agricultural
+season. Additionally, it omits critical sub-surface environmental features like root zone soil wetness (GWETROOT), which are essential for
+robust biophysical stress modeling.
+PAPER -2 : A Time-Series Hybrid Multi-Model Machine Learning Framework for Staple Crops Yield Prediction (Arya et al., 2026)
+1.Brief Description: This research aims to improve the accuracy of staple crop yield forecasting by addressing the complex, nonlinear dynamics
+inherent in agricultural data.
+2.Dataset Used: International macro-level agricultural yield datasets and historical time-series production records.
+3.Proposed Methodology: The authors designed a Time-Series Hybrid Multi-Model Machine Learning Framework, combining traditional linear
+time-series forecasting (ETS) with non-linear deep learning (Artificial Neural Networks and LSTM).
+4.Key Outcomes: The hybrid approach demonstrated superior accuracy for staple crops, specifically achieving an R▓ of 98.4% for Rice yield
+predictions.
+5.Research Gaps: The framework operates as an uninterpretable "black box," lacking Model Interpretability to explain why a crop might fail.
+Furthermore, its reliance on international macro-data makes it poorly suited for district-stratified, localized interventions for smallholder
+farmers. LITERATURE REVIEWS
+PAPER -3 : Precision Agriculture Revolution: Integrating Digital Twins and Advanced Crop Recommendation for Optimal Yield
+1.Brief Description: This paper explores the integration of Cyber-Physical Systems (CPS) to construct an agricultural digital twin
+capable of advanced, dynamic crop recommendation.
+2.Dataset Used: Operational farm-level data collected via localized Internet of Things (IoT) sensor networks.
+3.Proposed Methodology: The researchers developed a digital twin methodology that digitally mirrors the physical farm environment,
+enabling the execution of dynamic "What-if" simulations for agricultural planning.
+4.Key Outcomes: The implementation of the digital twin led to highly impactful optimizations, demonstrating a 10-25% increase in crop
+yield and a 20-30% reduction in water usage.
+5.Research Gaps: The heavy reliance on a sensor-dense "single-farm silo" creates a massive infrastructure cost and data interoperability
+bottleneck, rendering it financially unviable for smallholders. It also lacks an automated, explainable mechanism for translating
+complex AI logic to the farmer.
+PAPER -4 : Crop Yield Time-Series Data Prediction Based on Multiple Hybrid Machine Learning Models (Yan et al., 2025)
+1.Brief Description: This study focuses on enhancing the accuracy of continuous crop yield predictions by analyzing complex, non-linear
+relationships in agricultural time-series data.
+2.Dataset Used: Historical agricultural yield metrics combined with localized, real-time pesticide usage records.
+3.Proposed Methodology: The researchers constructed a Weighted Ensemble model that combines the predictive strengths of Random
+Forest (RF) and XGBoost algorithms.
+4.Key Outcomes: The hybrid ensemble approach significantly outperformed standalone models, successfully reducing the Mean Absolute
+Error (MAE) from 0.0177 (standalone RF) to 0.0042.
+5.Research Gaps: The model strictly predicts continuous yield volume (t/ha) rather than classifying the binary "Failure Anomalies"
+required for disaster relief triggering. Additionally, its heavy reliance on real-time pesticide data creates a severe operational
+bottleneck in developing regions where such data is often delayed or unavailable.
+PAPER -5 : Digital Twin-Based Uncertain Weather Condition Monitoring for Enhanced Crop Yield Prediction (Kenneth, 2026)
+1.Brief Description: Kenneth (2026) introduces the "CropTwin" framework, designed to monitor and mathematically model uncertain
+weather conditions to enhance the prediction of crop yields without relying on local hardware.
+2.Dataset Used: Continuous satellite meteorological telemetry sourced directly from the NASA POWER API.
+3.Proposed Methodology: The framework integrates digital twin technology with Monte Carlo simulations to computationally model
+weather uncertainty and evaluate counterfactual environmental scenarios.
+4.Key Outcomes: The simulated uncertainty approach proved highly viable, generating a real-time yield prediction of 5.90 t/ha compared
+to an uncertain weather projection of 5.62 t/ha using only satellite API data.
+5.Research Gaps: The framework exclusively models weather uncertainty while completely ignoring critical biotic stress factors (like
+pest infestations driven by humidity). It also operates purely as a predictive monitor, lacking a Decision Support System (DSS) to issue
+actionable intervention advisories back to the physical layer.

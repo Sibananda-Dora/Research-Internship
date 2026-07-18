@@ -21,11 +21,10 @@ const coordMarkerIcon = L.divIcon({
   className: 'coord-marker-icon',
   html: `<div style="
     width: 32px; height: 32px;
-    background: radial-gradient(circle, #06b6d4 40%, rgba(6,182,212,0.2) 70%);
+    background: var(--accent);
     border: 3px solid #fff;
     border-radius: 50%;
-    box-shadow: 0 0 20px rgba(6,182,212,0.8), 0 0 60px rgba(6,182,212,0.2);
-    animation: coord-pulse 2s ease-in-out infinite;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
   "></div>`,
   iconSize: [32, 32],
   iconAnchor: [16, 16]
@@ -200,7 +199,7 @@ function NominatimSearch({ onResult }) {
         backdropFilter: 'blur(8px)', borderRadius: '10px',
         border: '1px solid rgba(255,255,255,0.12)', padding: '6px 10px'
       }}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2" style={{ flexShrink: 0, marginTop: '4px' }}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2" style={{ flexShrink: 0, marginTop: '4px' }}>
           <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
         </svg>
         <input
@@ -208,8 +207,8 @@ function NominatimSearch({ onResult }) {
           onChange={(e) => { setQuery(e.target.value); search(e.target.value); }}
           placeholder="Search village or district..."
           style={{
-            flex: 1, background: 'transparent', border: 'none', color: '#f3f4f6',
-            outline: 'none', fontSize: '0.85rem', fontFamily: 'Inter, sans-serif'
+            flex: 1, background: 'transparent', border: 'none', color: 'var(--text-primary)',
+            outline: 'none', fontSize: '0.85rem', fontFamily: 'var(--font-sans)'
           }}
         />
       </div>
@@ -223,10 +222,10 @@ function NominatimSearch({ onResult }) {
           {results.map((item, i) => (
             <div key={i} onClick={() => select(item)} style={{
               padding: '8px 12px', cursor: 'pointer', fontSize: '0.8rem',
-              color: '#d1d5db', borderBottom: i < results.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none',
+              color: 'var(--text-secondary)', borderBottom: i < results.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none',
               transition: 'background 0.15s'
             }}
-              onMouseEnter={(e) => e.target.style.background = 'rgba(6,182,212,0.1)'}
+              onMouseEnter={(e) => e.target.style.background = 'var(--accent-soft)'}
               onMouseLeave={(e) => e.target.style.background = 'transparent'}
             >
               {item.display_name.split(',').slice(0, 3).join(', ')}
@@ -256,7 +255,7 @@ export default function OdishaGISMap({
     const name = feature.properties.name;
     const isSelected = selectedDistrict?.toLowerCase() === name?.toLowerCase();
     return {
-      fillColor: isSelected ? '#06b6d4' : '#1a1d2e',
+      fillColor: isSelected ? 'var(--accent)' : 'var(--surface-map)',
       fillOpacity: isSelected ? 0.35 : 0.05,
       color: isSelected ? '#ffffff' : 'rgba(255, 255, 255, 0.15)',
       weight: isSelected ? 2.5 : 1,
@@ -267,7 +266,7 @@ export default function OdishaGISMap({
   const onEachFeature = useCallback((feature, layer) => {
     const name = feature.properties.name;
     layer.bindTooltip(
-      `<div style="background:#111318;color:#fff;padding:4px 8px;border:1px solid rgba(255,255,255,0.1);border-radius:4px;">
+      `<div style="background:var(--bg-primary);color:var(--text-primary);padding:4px 8px;border:1px solid rgba(255,255,255,0.1);border-radius:4px;">
         <strong>${name}</strong>
       </div>`,
       { direction: 'top', offset: [0, -10], opacity: 0.95 }
@@ -279,7 +278,7 @@ export default function OdishaGISMap({
     layer.on('mouseout', () => {
       const isSelected = selectedDistrict?.toLowerCase() === name?.toLowerCase();
       layer.setStyle({
-        fillColor: isSelected ? '#06b6d4' : '#1a1d2e',
+        fillColor: isSelected ? 'var(--accent)' : 'var(--surface-map)',
         fillOpacity: isSelected ? 0.35 : 0.05,
         weight: isSelected ? 2.5 : 1,
         color: isSelected ? '#ffffff' : 'rgba(255, 255, 255, 0.15)'
@@ -321,10 +320,10 @@ export default function OdishaGISMap({
           {Object.entries(TILE_LAYERS).map(([key, layer]) => (
             <button key={key} onClick={() => setTileLayer(key)}
               style={{
-                padding: '6px 12px', fontSize: '0.75rem', fontFamily: 'Inter, sans-serif',
-                background: tileLayer === key ? 'rgba(6,182,212,0.2)' : 'transparent',
-                color: tileLayer === key ? '#06b6d4' : '#9ca3af',
-                border: tileLayer === key ? '1px solid rgba(6,182,212,0.3)' : '1px solid transparent',
+                padding: '6px 12px', fontSize: '0.75rem', fontFamily: 'var(--font-sans)',
+                background: tileLayer === key ? 'var(--accent-strong)' : 'transparent',
+                color: tileLayer === key ? 'var(--accent)' : 'var(--text-secondary)',
+                border: tileLayer === key ? '1px solid var(--accent)' : '1px solid transparent',
                 borderRadius: '8px', cursor: 'pointer', transition: 'all 0.15s',
                 fontWeight: 500
               }}
@@ -334,10 +333,10 @@ export default function OdishaGISMap({
         <button onClick={onToggleCoordinateMode}
           style={{
             display: 'flex', alignItems: 'center', gap: '6px',
-            padding: '6px 12px', fontSize: '0.75rem', fontFamily: 'Inter, sans-serif',
-            background: coordinateMode ? 'rgba(6,182,212,0.2)' : 'rgba(17,19,24,0.85)',
-            color: coordinateMode ? '#06b6d4' : '#9ca3af',
-            border: coordinateMode ? '1px solid rgba(6,182,212,0.3)' : '1px solid rgba(255,255,255,0.12)',
+            padding: '6px 12px', fontSize: '0.75rem', fontFamily: 'var(--font-sans)',
+            background: coordinateMode ? 'var(--accent-strong)' : 'rgba(17,19,24,0.85)',
+            color: coordinateMode ? 'var(--accent)' : 'var(--text-secondary)',
+            border: coordinateMode ? '1px solid var(--accent)' : '1px solid rgba(255,255,255,0.12)',
             borderRadius: '10px', cursor: 'pointer', transition: 'all 0.15s',
             backdropFilter: 'blur(8px)', fontWeight: 500, whiteSpace: 'nowrap'
           }}
@@ -360,22 +359,22 @@ export default function OdishaGISMap({
           zIndex: 500, boxShadow: '0 4px 24px rgba(0,0,0,0.5)'
         }}>
           <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: '0.65rem', color: '#9ca3af', fontWeight: 600 }}>LAT</div>
-            <div style={{ fontSize: '1rem', color: '#f3f4f6', fontWeight: 600, fontFamily: 'JetBrains Mono, monospace' }}>
+            <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', fontWeight: 600 }}>LAT</div>
+            <div style={{ fontSize: '1rem', color: 'var(--text-primary)', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>
               {selectedCoordinate.lat.toFixed(4)}°
             </div>
           </div>
           <div style={{ width: '1px', height: '24px', background: 'rgba(255,255,255,0.1)' }} />
           <div style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: '0.65rem', color: '#9ca3af', fontWeight: 600 }}>LNG</div>
-            <div style={{ fontSize: '1rem', color: '#f3f4f6', fontWeight: 600, fontFamily: 'JetBrains Mono, monospace' }}>
+            <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', fontWeight: 600 }}>LNG</div>
+            <div style={{ fontSize: '1rem', color: 'var(--text-primary)', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>
               {selectedCoordinate.lng.toFixed(4)}°
             </div>
           </div>
           <div style={{ width: '1px', height: '24px', background: 'rgba(255,255,255,0.1)' }} />
           <div>
-            <div style={{ fontSize: '0.65rem', color: '#9ca3af', fontWeight: 600 }}>PINNED</div>
-            <div style={{ fontSize: '0.85rem', color: '#06b6d4', fontWeight: 500 }}>Ready for prediction</div>
+            <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', fontWeight: 600 }}>PINNED</div>
+            <div style={{ fontSize: '0.85rem', color: 'var(--accent)', fontWeight: 500 }}>Ready for prediction</div>
           </div>
         </div>
       )}
@@ -407,7 +406,7 @@ export default function OdishaGISMap({
             positions={outerBoundary}
             pathOptions={{
               fill: false,
-              color: '#06b6d4',
+              color: 'var(--accent)',
               weight: 3.5,
               opacity: 0.9,
               interactive: false,
@@ -429,8 +428,8 @@ export default function OdishaGISMap({
             icon={coordMarkerIcon}
           >
             <Popup>
-              <div style={{ color: '#111', fontFamily: 'Inter, sans-serif', fontSize: '0.85rem', minWidth: '140px' }}>
-                <strong style={{ color: '#06b6d4' }}>Your Selected Point</strong>
+              <div style={{ color: '#111', fontFamily: 'var(--font-sans)', fontSize: '0.85rem', minWidth: '140px' }}>
+                <strong style={{ color: 'var(--accent)' }}>Your Selected Point</strong>
                 <div style={{ marginTop: '6px', fontFamily: 'monospace' }}>
                   Lat: {selectedCoordinate.lat.toFixed(4)}<br/>
                   Lng: {selectedCoordinate.lng.toFixed(4)}
